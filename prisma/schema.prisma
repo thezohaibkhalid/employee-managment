@@ -1,0 +1,356 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/**
+ * ========= Enums =========
+ */
+
+enum MachineType {
+  H17
+  H18
+  H28
+  H33
+  H34
+}
+
+enum BonusType {
+  TWO_HEAD
+  SHEET
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+  UNSPECIFIED
+}
+
+enum PayslipItemType {
+  SALARY
+  BONUS
+  HOLIDAY_BONUS
+  DEDUCTION
+  ADVANCE_DEDUCTION
+  ADJUSTMENT
+}
+
+/**
+ * ========= App Settings =========
+ */
+
+model AppSetting {
+  id               String @id @default(cuid())
+  fridayMultiplier Float  @default(2.5) // 2.5x
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/**
+ * ========= Catalogs =========
+ */
+
+model MachineCompany {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  machines  Machine[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Designation {
+  id            String  @id @default(cuid())
+  name          String  @unique // e.g., operator, karigar, helper, accountant
+  isVariablePay Boolean @default(false) // true for operator/karigar/helper
+  slug          String? @unique
+  notes         String?
+
+  employees Employee[]
+  salaries  MachineTypeSalary[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/**
+ * ========= Core =========
+ */
+
+model Machine {
+  id          String         @id @default(cuid())
+  name        String
+  company     MachineCompany @relation(fields: [companyId], references: [id])
+  companyId   String
+  machineType MachineType
+
+  payrollRuns PayrollRun[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([name, companyId])
+}
+
+model Employee {
+  id        String @id @default(cuid())
+  empNumber Int    @default(autoincrement())
+  empCode   String @unique // Generate in app as "EMP" + empNumber
+
+  name       String
+  fatherName String?
+  dob        DateTime?
+  cnic       String?   @unique
+  phone      String?
+  address    String?
+  city       String?
+  caste      String?
+  gender     Gender    @default(UNSPECIFIED)
+  bloodGroup String?
+
+  designation   Designation @relation(fields: [designationId], references: [id])
+  designationId String
+
+  // For fixed-salary employees (non-operator/karigar/helper):
+  fixedMonthlySalary Decimal? @db.Decimal(12, 2)
+
+  // Introducer / Reference
+  referenceName     String?
+  referencePhone    String?
+  referenceRelation String?
+
+  // Emergency/Contact Person
+  contactPersonName     String?
+  contactPersonNumber   String?
+  contactPersonRelation String?
+
+  advances   EmployeeAdvance[]
+  payslips   EmployeePayslip[]
+  // Variable-pay assignments on workdays
+  workdayAsA WorkDay[]         @relation("WorkdayEmployeeA")
+  workdayAsB WorkDay[]         @relation("WorkdayEmployeeB")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model EmployeeAdvance {
+  id         String   @id @default(cuid())
+  employee   Employee @relation(fields: [employeeId], references: [id])
+  employeeId String
+  amount     Decimal  @db.Decimal(12, 2)
+  takenOn    DateTime @default(now())
+  note       String?
+
+  allocations AdvanceAllocation[]
+
+  @@index([employeeId, takenOn])
+}
+
+/**
+ * ========= Monthly scaffolding =========
+ * All monthly calculations are scoped by PayrollPeriod.
+ */
+
+model PayrollPeriod {
+  id    String @id @default(cuid())
+  year  Int
+  month Int // 1-12
+
+  runs     PayrollRun[]
+  payslips EmployeePayslip[]
+
+  createdAt DateTime @default(now())
+
+  @@unique([year, month])
+}
+
+/**
+ * ========= Rates (uploaded) =========
+ */
+
+// Salary per MachineType for variable-pay roles (operator/karigar/helper)
+model MachineTypeSalary {
+  id            String      @id @default(cuid())
+  machineType   MachineType
+  designation   Designation @relation(fields: [designationId], references: [id])
+  designationId String
+  monthlySalary Decimal     @db.Decimal(12, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([machineType, designationId])
+}
+
+// Bonus tiers by MachineType (CSV with two_head_rate and sheet_rate)
+// Interpretation: use row where minStitches <= stitches <= maxStitches (null max = open-ended)
+model MachineTypeBonusTier {
+  id          String      @id @default(cuid())
+  machineType MachineType
+  minStitches Int
+  maxStitches Int?
+  rateTwoHead Decimal     @db.Decimal(12, 4)
+  rateSheet   Decimal     @db.Decimal(12, 4)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([machineType, minStitches])
+}
+
+/**
+ * ========= Payroll (per Machine + Period) =========
+ */
+
+model PayrollRun {
+  id        String  @id @default(cuid())
+  machine   Machine @relation(fields: [machineId], references: [id])
+  machineId String
+
+  period   PayrollPeriod @relation(fields: [periodId], references: [id])
+  periodId String
+
+  // snapshot of used rates and settings (for audit immutability)
+  rateSnapshot Json
+
+  workdays WorkDay[]
+  payslips EmployeePayslip[] // variable-pay employees for this machine/month
+
+  createdBy   String?
+  createdAt   DateTime  @default(now())
+  finalizedAt DateTime?
+
+  @@unique([machineId, periodId])
+}
+
+model WorkDay {
+  id           String     @id @default(cuid())
+  payrollRun   PayrollRun @relation(fields: [payrollRunId], references: [id])
+  payrollRunId String
+
+  date     DateTime
+  weekday  Int // 0=Sun ... 6=Sat
+  isFriday Boolean  @default(false)
+
+  bonusType   BonusType
+  stitches    Int       @default(0)
+  rateUsed    Json // resolved tier/price at time of calc
+  bonusAmount Decimal   @db.Decimal(12, 2) // total for the day (before split)
+
+  // Two employees max (50/50 bonus split)
+  employeeA   Employee? @relation("WorkdayEmployeeA", fields: [employeeAId], references: [id])
+  employeeAId String?
+  employeeB   Employee? @relation("WorkdayEmployeeB", fields: [employeeBId], references: [id])
+  employeeBId String?
+
+  // Daily salary resolved per employee (after Friday multiplier & leaves)
+  salaryA Decimal? @db.Decimal(12, 2)
+  salaryB Decimal? @db.Decimal(12, 2)
+
+  // Leave flags
+  leaveANormal Boolean @default(false)
+  leaveAFriday Boolean @default(false)
+  leaveBNormal Boolean @default(false)
+  leaveBFriday Boolean @default(false)
+
+  // Editable overrides
+  bonusOverride Decimal? @db.Decimal(12, 2)
+  note          String?
+
+  payslipItems PayslipItem[] // optional backrefs when creating ledger lines
+
+  @@unique([payrollRunId, date]) // one row per day in a run
+  @@index([payrollRunId, date])
+}
+
+/**
+ * ========= Payslips & Ledger =========
+ */
+
+model EmployeePayslip {
+  id String @id @default(cuid())
+
+  // Mandatory month
+  period   PayrollPeriod @relation(fields: [periodId], references: [id])
+  periodId String
+
+  // Optional link to a machine run (for variable-pay roles)
+  payrollRun   PayrollRun? @relation(fields: [payrollRunId], references: [id])
+  payrollRunId String?
+
+  employee   Employee @relation(fields: [employeeId], references: [id])
+  employeeId String
+
+  grossSalary   Decimal @db.Decimal(12, 2)
+  grossBonus    Decimal @db.Decimal(12, 2)
+  holidaysCount Int     @default(0)
+  fridayLeaves  Int     @default(0)
+  normalLeaves  Int     @default(0)
+
+  advancesDeducted Decimal @default(0) @db.Decimal(12, 2)
+  netPay           Decimal @db.Decimal(12, 2)
+
+  items       PayslipItem[]
+  allocations AdvanceAllocation[] // exact mapping of advances deducted this month
+
+  createdAt DateTime @default(now())
+
+  @@unique([periodId, employeeId])
+  @@index([employeeId, periodId])
+}
+
+model PayslipItem {
+  id        String          @id @default(cuid())
+  payslip   EmployeePayslip @relation(fields: [payslipId], references: [id])
+  payslipId String
+
+  kind        PayslipItemType
+  amount      Decimal         @db.Decimal(12, 2)
+  description String?
+
+  // Optional linkage to WorkDay for machine-based items (bonus/salary per day)
+  workDay   WorkDay? @relation(fields: [workDayId], references: [id])
+  workDayId String?
+
+  @@index([payslipId])
+  @@index([workDayId])
+}
+
+/**
+ * ========= Allocate advances to payslips (multi-month tracking) =========
+ */
+
+model AdvanceAllocation {
+  id String @id @default(cuid())
+
+  advance   EmployeeAdvance @relation(fields: [advanceId], references: [id])
+  advanceId String
+
+  payslip   EmployeePayslip @relation(fields: [payslipId], references: [id])
+  payslipId String
+
+  amount Decimal @db.Decimal(12, 2)
+
+  @@index([advanceId])
+  @@index([payslipId])
+}
+
+/**
+ * ========= Upload bookkeeping (optional) =========
+ */
+
+model Upload {
+  id          String      @id @default(cuid())
+  kind        String // "BONUS_RATES" | "SALARY_RATES"
+  machineType MachineType
+  fileName    String
+  rowCount    Int
+  processedAt DateTime    @default(now())
+  meta        Json?
+}
