@@ -1,50 +1,158 @@
-"use client"
+// app/salary-calculation/page.tsx
+"use client";
 
-import { useState } from "react"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs"
-import { SalaryCalculator } from "../../components/salary/salary-calculator"
-import { SalaryHistory } from "../../components/salary/salary-history"
-import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card"
-import { Calculator, History, TrendingUp } from "lucide-react"
-import { mockEmployees } from "../../lib/data/mock-data"
-import type { Employee, SalaryCalculation } from "../../lib/types"
+import { useEffect, useMemo, useState } from "react";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "../../components/ui/tabs";
+import { SalaryCalculator } from "../../components/salary/salary-calculator";
+import { SalaryHistory } from "../../components/salary/salary-history";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "../../components/ui/card";
+import { Calculator, History, TrendingUp } from "lucide-react";
+import type { Employee } from "../../lib/types";
+
+// Fallback types if your components expect a shape
+type AnySalaryCalc = any;
 
 export default function SalaryCalculationPage() {
-  const [employees] = useState<Employee[]>(mockEmployees)
-  const [salaryRecords, setSalaryRecords] = useState<SalaryCalculation[]>([])
-  const [isLoading, setIsLoading] = useState(false)
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [salaryRecords, setSalaryRecords] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
 
-  const handleCalculateSalaries = async (calculations: SalaryCalculation[]) => {
-    setIsLoading(true)
+  const currentMonth = new Date().getMonth() + 1;
+  const currentYear = new Date().getFullYear();
+
+  // Load employees + current month salary records from API
+  useEffect(() => {
+    const load = async () => {
+      try {
+        setInitialLoading(true);
+        const [empRes, recRes] = await Promise.all([
+          fetch(`/api/employees`, { cache: "no-store" }),
+          fetch(
+            `/api/salary/records?month=${currentMonth}&year=${currentYear}`,
+            { cache: "no-store" }
+          ),
+        ]);
+        if (!empRes.ok) throw new Error("Failed to fetch employees");
+        if (!recRes.ok) throw new Error("Failed to fetch salary records");
+
+        const [empData, recData] = await Promise.all([
+          empRes.json(),
+          recRes.json(),
+        ]);
+        setEmployees(empData || []);
+        setSalaryRecords(recData || []);
+      } catch (e) {
+        console.error("Initial load error:", e);
+        setEmployees([]);
+        setSalaryRecords([]);
+      } finally {
+        setInitialLoading(false);
+      }
+    };
+    load();
+  }, [currentMonth, currentYear]);
+
+  // Adapter: make employees look like the mock structure the calculator expects
+  // - expose `designation.hasFixedSalary` (derived from !isVariablePay)
+  // - expose `salary` (derived from fixedMonthlySalary)
+  const calcEmployees = useMemo(() => {
+    return (employees || []).map((e: any) => ({
+      ...e,
+      salary: e.fixedMonthlySalary ?? 0,
+      designation: {
+        ...e.designation,
+        hasFixedSalary: !e.designation?.isVariablePay,
+      },
+    }));
+  }, [employees]);
+
+  const fixedSalaryEmployees = useMemo(
+    () =>
+      calcEmployees.filter(
+        (emp: any) => emp.designation?.hasFixedSalary && emp.salary
+      ),
+    [calcEmployees]
+  );
+
+  const currentMonthRecords = useMemo(
+    () =>
+      (salaryRecords || []).filter(
+        (r: any) => r.month === currentMonth && r.year === currentYear
+      ),
+    [salaryRecords, currentMonth, currentYear]
+  );
+
+  const totalCurrentMonth = useMemo(
+    () =>
+      currentMonthRecords.reduce(
+        (sum: number, r: any) =>
+          sum + Number(r.total_salary ?? r.totalSalary ?? r.final_salary ?? 0),
+        0
+      ),
+    [currentMonthRecords]
+  );
+
+  // Accepts array emitted from SalaryCalculator and persists via API (bulk-friendly)
+  const handleCalculateSalaries = async (calculations: AnySalaryCalc[]) => {
+    setIsLoading(true);
     try {
-      // Simulate API call
-      await new Promise((resolve) => setTimeout(resolve, 2000))
+      // POST array to bulk create
+      const res = await fetch(`/api/salary/records`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(calculations),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error || "Failed to save salary records");
+      }
+      const created = await res.json();
 
-      setSalaryRecords((prev) => [...prev, ...calculations])
+      // Merge to local state
+      setSalaryRecords((prev) => [...created, ...prev]);
 
-      // Show success message
-      alert(`Successfully calculated salaries for ${calculations.length} employees!`)
+      alert(
+        `Successfully calculated & saved salaries for ${calculations.length} employees!`
+      );
     } catch (error) {
-      console.error("Error calculating salaries:", error)
-      alert("Error calculating salaries. Please try again.")
+      console.error("Error calculating/saving salaries:", error);
+      alert("Error calculating/saving salaries. Please try again.");
     } finally {
-      setIsLoading(false)
+      setIsLoading(false);
     }
-  }
+  };
 
-  const fixedSalaryEmployees = employees.filter((emp) => emp.designation.hasFixedSalary && emp.salary)
-  const currentMonth = new Date().getMonth() + 1
-  const currentYear = new Date().getFullYear()
-  const currentMonthRecords = salaryRecords.filter(
-    (record) => record.month === currentMonth && record.year === currentYear,
-  )
-  const totalCurrentMonth = currentMonthRecords.reduce((sum, record) => sum + record.totalSalary, 0)
+  if (initialLoading) {
+    return (
+      <div className="container mx-auto py-8 px-4">
+        <div className="text-center py-12">
+          <h3 className="text-lg font-semibold mb-2">Loading...</h3>
+          <p className="text-muted-foreground">
+            Fetching employees and salary records
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="container mx-auto py-8 px-4">
       <div className="mb-8">
         <h1 className="text-3xl font-bold">Salary Calculation System</h1>
-        <p className="text-muted-foreground">Calculate and manage salaries for fixed-salary employees</p>
+        <p className="text-muted-foreground">
+          Calculate and manage salaries for fixed-salary employees
+        </p>
       </div>
 
       {/* Statistics */}
@@ -54,8 +162,12 @@ export default function SalaryCalculationPage() {
             <div className="flex items-center gap-3">
               <Calculator className="h-8 w-8 text-blue-600" />
               <div>
-                <p className="text-2xl font-bold">{fixedSalaryEmployees.length}</p>
-                <p className="text-sm text-muted-foreground">Fixed Salary Employees</p>
+                <p className="text-2xl font-bold">
+                  {fixedSalaryEmployees.length}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Fixed Salary Employees
+                </p>
               </div>
             </div>
           </CardContent>
@@ -66,8 +178,12 @@ export default function SalaryCalculationPage() {
             <div className="flex items-center gap-3">
               <TrendingUp className="h-8 w-8 text-green-600" />
               <div>
-                <p className="text-2xl font-bold">Rs. {totalCurrentMonth.toLocaleString()}</p>
-                <p className="text-sm text-muted-foreground">Current Month Total</p>
+                <p className="text-2xl font-bold">
+                  Rs. {Number(totalCurrentMonth).toLocaleString()}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Current Month Total
+                </p>
               </div>
             </div>
           </CardContent>
@@ -100,12 +216,16 @@ export default function SalaryCalculationPage() {
                 Monthly Salary Calculator
               </CardTitle>
               <p className="text-sm text-muted-foreground">
-                Calculate salaries for employees with fixed monthly salaries. Includes Friday multipliers, holidays, and
-                deductions.
+                Calculate salaries for employees with fixed monthly salaries.
+                Includes Friday multipliers, holidays, and deductions.
               </p>
             </CardHeader>
             <CardContent>
-              <SalaryCalculator employees={employees} onCalculate={handleCalculateSalaries} isLoading={isLoading} />
+              <SalaryCalculator
+                employees={calcEmployees}
+                onCalculate={handleCalculateSalaries}
+                isLoading={isLoading}
+              />
             </CardContent>
           </Card>
         </TabsContent>
@@ -122,11 +242,14 @@ export default function SalaryCalculationPage() {
               </p>
             </CardHeader>
             <CardContent>
-              <SalaryHistory salaryRecords={salaryRecords} employees={employees} />
+              <SalaryHistory
+                salaryRecords={salaryRecords}
+                employees={calcEmployees}
+              />
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
     </div>
-  )
+  );
 }

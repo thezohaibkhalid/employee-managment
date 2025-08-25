@@ -31,38 +31,58 @@ import {
   DollarSign,
   Clock,
 } from "lucide-react";
-import {
-  getPayrollRuns,
-  getPayslips,
-  getPayrollSummary,
-} from "../../lib/api/payroll";
+
+type AnyRun = any;
+type AnyPayslip = any;
+type AnySummary = any;
 
 export default function PayrollPage() {
-  const [payrollRuns, setPayrollRuns] = useState([]);
-  const [payslips, setPayslips] = useState([]);
-  const [summary, setSummary] = useState(null);
+  const [payrollRuns, setPayrollRuns] = useState<AnyRun[]>([]);
+  const [payslips, setPayslips] = useState<AnyPayslip[]>([]);
+  const [summary, setSummary] = useState<AnySummary | null>(null);
   const [loading, setLoading] = useState(true);
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
-  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
+  const [selectedYear, setSelectedYear] = useState<number>(
+    new Date().getFullYear()
+  );
+  const [selectedMonth, setSelectedMonth] = useState<number>(
+    new Date().getMonth() + 1
+  );
 
   useEffect(() => {
     loadPayrollData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedYear, selectedMonth]);
 
   const loadPayrollData = async () => {
     try {
       setLoading(true);
-      const [runsData, payslipsData, summaryData] = await Promise.all([
-        getPayrollRuns({ year: selectedYear, month: selectedMonth }),
-        getPayslips({ year: selectedYear, month: selectedMonth }),
-        getPayrollSummary(selectedYear, selectedMonth),
+
+      const qs = `year=${selectedYear}&month=${selectedMonth}`;
+
+      const [runsRes, slipsRes, summaryRes] = await Promise.all([
+        fetch(`/api/payroll/runs?${qs}`, { cache: "no-store" }),
+        fetch(`/api/payroll/payslips?${qs}`, { cache: "no-store" }),
+        fetch(`/api/payroll/summary?${qs}`, { cache: "no-store" }),
       ]);
 
-      setPayrollRuns(runsData);
-      setPayslips(payslipsData);
-      setSummary(summaryData);
+      if (!runsRes.ok) throw new Error("Failed to fetch runs");
+      if (!slipsRes.ok) throw new Error("Failed to fetch payslips");
+      if (!summaryRes.ok) throw new Error("Failed to fetch summary");
+
+      const [runsData, payslipsData, summaryData] = await Promise.all([
+        runsRes.json(),
+        slipsRes.json(),
+        summaryRes.json(),
+      ]);
+
+      setPayrollRuns(runsData || []);
+      setPayslips(payslipsData || []);
+      setSummary(summaryData || null);
     } catch (error) {
       console.error("Error loading payroll data:", error);
+      setPayrollRuns([]);
+      setPayslips([]);
+      setSummary(null);
     } finally {
       setLoading(false);
     }
@@ -103,17 +123,15 @@ export default function PayrollPage() {
             <div className="space-y-2">
               <Label>Month</Label>
               <Select
-                value={selectedMonth.toString()}
-                onValueChange={(value) =>
-                  setSelectedMonth(Number.parseInt(value))
-                }
+                value={String(selectedMonth)}
+                onValueChange={(value) => setSelectedMonth(parseInt(value))}
               >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   {Array.from({ length: 12 }, (_, i) => (
-                    <SelectItem key={i + 1} value={(i + 1).toString()}>
+                    <SelectItem key={i + 1} value={String(i + 1)}>
                       {new Date(2024, i).toLocaleDateString("en-US", {
                         month: "long",
                       })}
@@ -128,9 +146,7 @@ export default function PayrollPage() {
               <Input
                 type="number"
                 value={selectedYear}
-                onChange={(e) =>
-                  setSelectedYear(Number.parseInt(e.target.value))
-                }
+                onChange={(e) => setSelectedYear(parseInt(e.target.value))}
               />
             </div>
           </div>
@@ -172,7 +188,7 @@ export default function PayrollPage() {
                 <TrendingUp className="h-8 w-8 text-purple-600" />
                 <div>
                   <p className="text-2xl font-bold">
-                    Rs. {summary.totalGrossBonus.toLocaleString()}
+                    Rs. {Number(summary.totalGrossBonus).toLocaleString()}
                   </p>
                   <p className="text-sm text-muted-foreground">Total Bonus</p>
                 </div>
@@ -186,7 +202,7 @@ export default function PayrollPage() {
                 <DollarSign className="h-8 w-8 text-orange-600" />
                 <div>
                   <p className="text-2xl font-bold">
-                    Rs. {summary.totalNetPay.toLocaleString()}
+                    Rs. {Number(summary.totalNetPay).toLocaleString()}
                   </p>
                   <p className="text-sm text-muted-foreground">Total Net Pay</p>
                 </div>
@@ -203,6 +219,7 @@ export default function PayrollPage() {
           <TabsTrigger value="reports">Reports</TabsTrigger>
         </TabsList>
 
+        {/* Runs */}
         <TabsContent value="runs" className="space-y-4">
           <Card>
             <CardHeader>
@@ -218,7 +235,7 @@ export default function PayrollPage() {
                 </p>
               ) : (
                 <div className="space-y-4">
-                  {payrollRuns.map((run) => (
+                  {payrollRuns.map((run: any) => (
                     <div key={run.id} className="border rounded-lg p-4">
                       <div className="flex items-center justify-between mb-3">
                         <div>
@@ -235,7 +252,7 @@ export default function PayrollPage() {
                             {run.finalizedAt ? "Finalized" : "Draft"}
                           </Badge>
                           <p className="text-sm text-muted-foreground mt-1">
-                            {run.createdAt.toLocaleDateString()}
+                            {new Date(run.createdAt).toLocaleDateString()}
                           </p>
                         </div>
                       </div>
@@ -255,7 +272,8 @@ export default function PayrollPage() {
                             Rs.{" "}
                             {run.payslips
                               .reduce(
-                                (sum, p) => sum + Number(p.grossSalary),
+                                (sum: number, p: any) =>
+                                  sum + Number(p.grossSalary),
                                 0
                               )
                               .toLocaleString()}
@@ -266,7 +284,11 @@ export default function PayrollPage() {
                           <p className="font-medium">
                             Rs.{" "}
                             {run.payslips
-                              .reduce((sum, p) => sum + Number(p.grossBonus), 0)
+                              .reduce(
+                                (sum: number, p: any) =>
+                                  sum + Number(p.grossBonus),
+                                0
+                              )
                               .toLocaleString()}
                           </p>
                         </div>
@@ -279,6 +301,7 @@ export default function PayrollPage() {
           </Card>
         </TabsContent>
 
+        {/* Payslips */}
         <TabsContent value="payslips" className="space-y-4">
           <Card>
             <CardHeader>
@@ -294,26 +317,23 @@ export default function PayrollPage() {
                 </p>
               ) : (
                 <div className="space-y-4">
-                  {payslips.map((payslip) => (
-                    <div key={payslip.id} className="border rounded-lg p-4">
+                  {payslips.map((p: any) => (
+                    <div key={p.id} className="border rounded-lg p-4">
                       <div className="flex items-center justify-between mb-3">
                         <div>
-                          <h4 className="font-semibold">
-                            {payslip.employee.name}
-                          </h4>
+                          <h4 className="font-semibold">{p.employee.name}</h4>
                           <p className="text-sm text-muted-foreground">
-                            {payslip.employee.empCode} •{" "}
-                            {payslip.employee.designation.name}
+                            {p.employee.empCode} • {p.employee.designation.name}
                           </p>
-                          {payslip.payrollRun && (
+                          {p.payrollRun && (
                             <p className="text-sm text-muted-foreground">
-                              Machine: {payslip.payrollRun.machine.name}
+                              Machine: {p.payrollRun.machine.name}
                             </p>
                           )}
                         </div>
                         <div className="text-right">
                           <p className="text-lg font-bold">
-                            Rs. {Number(payslip.netPay).toLocaleString()}
+                            Rs. {Number(p.netPay).toLocaleString()}
                           </p>
                           <p className="text-sm text-muted-foreground">
                             Net Pay
@@ -325,27 +345,24 @@ export default function PayrollPage() {
                         <div>
                           <p className="text-muted-foreground">Gross Salary</p>
                           <p className="font-medium">
-                            Rs. {Number(payslip.grossSalary).toLocaleString()}
+                            Rs. {Number(p.grossSalary).toLocaleString()}
                           </p>
                         </div>
                         <div>
                           <p className="text-muted-foreground">Bonus</p>
                           <p className="font-medium">
-                            Rs. {Number(payslip.grossBonus).toLocaleString()}
+                            Rs. {Number(p.grossBonus).toLocaleString()}
                           </p>
                         </div>
                         <div>
                           <p className="text-muted-foreground">Advances</p>
                           <p className="font-medium text-destructive">
-                            - Rs.{" "}
-                            {Number(payslip.advancesDeducted).toLocaleString()}
+                            - Rs. {Number(p.advancesDeducted).toLocaleString()}
                           </p>
                         </div>
                         <div>
                           <p className="text-muted-foreground">Working Days</p>
-                          <p className="font-medium">
-                            {payslip.workingDays || 0}
-                          </p>
+                          <p className="font-medium">{p.workingDays || 0}</p>
                         </div>
                       </div>
                     </div>
@@ -356,6 +373,7 @@ export default function PayrollPage() {
           </Card>
         </TabsContent>
 
+        {/* Reports */}
         <TabsContent value="reports" className="space-y-4">
           <Card>
             <CardHeader>
@@ -383,7 +401,7 @@ export default function PayrollPage() {
                     </div>
                     <div className="text-center p-4 border rounded-lg">
                       <p className="text-2xl font-bold">
-                        Rs. {summary.totalGrossSalary.toLocaleString()}
+                        Rs. {Number(summary.totalGrossSalary).toLocaleString()}
                       </p>
                       <p className="text-sm text-muted-foreground">
                         Gross Salary
@@ -391,7 +409,7 @@ export default function PayrollPage() {
                     </div>
                     <div className="text-center p-4 border rounded-lg">
                       <p className="text-2xl font-bold">
-                        Rs. {summary.totalGrossBonus.toLocaleString()}
+                        Rs. {Number(summary.totalGrossBonus).toLocaleString()}
                       </p>
                       <p className="text-sm text-muted-foreground">
                         Total Bonus
@@ -399,7 +417,7 @@ export default function PayrollPage() {
                     </div>
                     <div className="text-center p-4 border rounded-lg">
                       <p className="text-2xl font-bold">
-                        Rs. {summary.totalNetPay.toLocaleString()}
+                        Rs. {Number(summary.totalNetPay).toLocaleString()}
                       </p>
                       <p className="text-sm text-muted-foreground">Net Pay</p>
                     </div>
@@ -409,27 +427,26 @@ export default function PayrollPage() {
                   <div>
                     <h4 className="font-semibold mb-3">By Machine</h4>
                     <div className="space-y-2">
-                      {summary.byMachine.map((machine, index) => (
+                      {summary.byMachine.map((m: any, i: number) => (
                         <div
-                          key={index}
+                          key={i}
                           className="flex items-center justify-between p-3 border rounded-lg"
                         >
                           <div>
-                            <p className="font-medium">
-                              {machine.machine.name}
-                            </p>
+                            <p className="font-medium">{m.machine.name}</p>
                             <p className="text-sm text-muted-foreground">
-                              {machine.machine.company.name} •{" "}
-                              {machine.employeeCount} employees
+                              {m.machine.company.name} • {m.employeeCount}{" "}
+                              employees
                             </p>
                           </div>
                           <div className="text-right">
                             <p className="font-semibold">
-                              Rs. {machine.totalNetPay.toLocaleString()}
+                              Rs. {Number(m.totalNetPay).toLocaleString()}
                             </p>
                             <p className="text-sm text-muted-foreground">
-                              Salary: Rs. {machine.totalSalary.toLocaleString()}{" "}
-                              | Bonus: Rs. {machine.totalBonus.toLocaleString()}
+                              Salary: Rs.{" "}
+                              {Number(m.totalSalary).toLocaleString()} | Bonus:
+                              Rs. {Number(m.totalBonus).toLocaleString()}
                             </p>
                           </div>
                         </div>
@@ -442,7 +459,7 @@ export default function PayrollPage() {
                     <h4 className="font-semibold mb-3">By Designation</h4>
                     <div className="space-y-2">
                       {Object.entries(summary.byDesignation).map(
-                        ([designation, data]) => (
+                        ([designation, data]: any) => (
                           <div
                             key={designation}
                             className="flex items-center justify-between p-3 border rounded-lg"
@@ -457,12 +474,12 @@ export default function PayrollPage() {
                             </div>
                             <div className="text-right">
                               <p className="font-semibold">
-                                Rs. {data.totalNetPay.toLocaleString()}
+                                Rs. {Number(data.totalNetPay).toLocaleString()}
                               </p>
                               <p className="text-sm text-muted-foreground">
                                 Avg: Rs.{" "}
                                 {Math.round(
-                                  data.totalNetPay / data.count
+                                  Number(data.totalNetPay) / data.count
                                 ).toLocaleString()}
                               </p>
                             </div>
