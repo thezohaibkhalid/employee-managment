@@ -1,249 +1,216 @@
-// app/bonus-salary-calculation/page.tsx
 "use client";
 
 import { useState, useEffect } from "react";
-import { MachineSelector } from "../../components/bonus-salary/machine-selector";
-import { MonthlyCalculationTable } from "../../components/bonus-salary/monthly-calculation-table";
-import { CalculationSummary } from "../../components/bonus-salary/calculation-summary";
-import { Card, CardContent } from "../../components/ui/card";
-import { Alert, AlertDescription } from "../../components/ui/alert";
-import { Info } from "lucide-react";
-// ❌ remove prisma-backed imports
-// import { getMachines } from "../../lib/api/machines";
-// import { getEmployees } from "../../lib/api/employees";
-import type { Machine, Employee, BonusRate, SalaryRate } from "../../lib/types";
+import { Button } from "../../components/ui/button";
+import { PrimaryPopup } from "../../components/ui/primary-popup";
+import { MachineForm } from "../../components/machines/machine-form";
+import { MachineList } from "../../components/machines/machine-list";
+import { Plus } from "lucide-react";
+import type {
+  MachineFormData,
+  BonusUploadData,
+  SalaryUploadData,
+} from "../../lib/types";
 
-interface DailyWorkEntry {
-  date: Date;
-  day: string;
-  bonusType: "stitch" | "2 head" | "sheet";
-  stitches: number;
-  employee1Id: string;
-  employee2Id: string;
-  bonusAmount: number;
-  salaryAmount: number;
-}
-
-interface EmployeeSummary {
-  employee: Employee;
-  totalSalary: number;
-  totalBonus: number;
-  workingDays: number;
-  finalAmount: number;
-}
-
-export default function BonusSalaryCalculationPage() {
-  const [machines, setMachines] = useState<Machine[]>([]);
-  const [employees, setEmployees] = useState<Employee[]>([]);
-  const [bonusRates, setBonusRates] = useState<BonusRate[]>([]);
-  const [salaryRates, setSalaryRates] = useState<SalaryRate[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  const [selectedMachine, setSelectedMachine] = useState<Machine | null>(null);
-  const [calculationComplete, setCalculationComplete] = useState(false);
-  const [employeeSummaries, setEmployeeSummaries] = useState<EmployeeSummary[]>(
-    []
-  );
+export default function MachinesPage() {
+  const [machines, setMachines] = useState<any[]>([]);
+  const [isAddingMachine, setIsAddingMachine] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // Load machines + employees via API
   useEffect(() => {
     const load = async () => {
       try {
-        setLoading(true);
-
-        const [machinesRes, employeesRes] = await Promise.all([
-          fetch("/api/machines", { cache: "no-store" }),
-          fetch("/api/employees", { cache: "no-store" }),
-        ]);
-
-        const [machinesData, employeesData] = await Promise.all([
-          machinesRes.json(),
-          employeesRes.json(),
-        ]);
-
-        if (!machinesRes.ok)
-          throw new Error(machinesData?.error || "Failed to load machines");
-        if (!employeesRes.ok)
-          throw new Error(employeesData?.error || "Failed to load employees");
-
-        setMachines(machinesData || []);
-        setEmployees(employeesData || []);
-      } catch (error) {
-        console.error("Error loading data:", error);
+        setIsLoading(true);
+        const res = await fetch("/api/machines", { cache: "no-store" });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to load machines");
+        setMachines(data || []);
+      } catch (err) {
+        console.error("Error fetching machines:", err);
+        setError("Failed to load machines");
       } finally {
-        setLoading(false);
+        setIsLoading(false);
       }
     };
-
     load();
   }, []);
 
-  // When a machine is selected, fetch its rates via API
-  useEffect(() => {
-    const fetchRates = async () => {
-      if (!selectedMachine) {
-        setBonusRates([]);
-        setSalaryRates([]);
-        return;
-      }
-      try {
-        const res = await fetch(
-          `/api/machines/${encodeURIComponent(selectedMachine.id)}/rates`,
-          {
-            cache: "no-store",
-          }
-        );
-        const data = await res.json();
-        if (!res.ok)
-          throw new Error(data?.error || "Failed to fetch machine rates");
-        setBonusRates(data.bonusRates || []);
-        setSalaryRates(data.salaryRates || []);
-      } catch (error) {
-        console.error("Error fetching machine rates:", error);
-        setBonusRates([]);
-        setSalaryRates([]);
-      }
-    };
-    fetchRates();
-  }, [selectedMachine]);
-
-  const handleCalculationComplete = (workEntries: DailyWorkEntry[]) => {
-    const employeeMap = new Map<
-      string,
-      { salary: number; bonus: number; days: number }
-    >();
-
-    workEntries.forEach((entry) => {
-      if (entry.stitches > 0) {
-        const employee1 = employees.find((emp) => emp.id === entry.employee1Id);
-        const employee2 = employees.find((emp) => emp.id === entry.employee2Id);
-
-        // Employee 1
-        if (employee1) {
-          const current = employeeMap.get(entry.employee1Id) || {
-            salary: 0,
-            bonus: 0,
-            days: 0,
-          };
-          const designation1 = employee1.designation.name.toLowerCase();
-          const salaryRate1 =
-            salaryRates.find(
-              (r) =>
-                r.machineId === selectedMachine?.id &&
-                r.designation === designation1
-            )?.dailyRate || 0;
-          const isFriday = entry.day.toLowerCase() === "friday";
-          const salaryAmount1 = salaryRate1 * (isFriday ? 2.5 : 1);
-
-          let bonusShare1 = 0;
-          if (designation1 === "operator" || designation1 === "karigar") {
-            const employee2Designation =
-              employee2?.designation.name.toLowerCase();
-            const employee2CanGetBonus =
-              employee2Designation === "operator" ||
-              employee2Designation === "karigar";
-            bonusShare1 = employee2CanGetBonus
-              ? entry.bonusAmount / 2
-              : entry.bonusAmount;
-          }
-
-          employeeMap.set(entry.employee1Id, {
-            salary: current.salary + salaryAmount1,
-            bonus: current.bonus + bonusShare1,
-            days: current.days + 1,
-          });
-        }
-
-        // Employee 2
-        if (employee2) {
-          const current = employeeMap.get(entry.employee2Id) || {
-            salary: 0,
-            bonus: 0,
-            days: 0,
-          };
-          const designation2 = employee2.designation.name.toLowerCase();
-          const salaryRate2 =
-            salaryRates.find(
-              (r) =>
-                r.machineId === selectedMachine?.id &&
-                r.designation === designation2
-            )?.dailyRate || 0;
-          const isFriday = entry.day.toLowerCase() === "friday";
-          const salaryAmount2 = salaryRate2 * (isFriday ? 2.5 : 1);
-
-          let bonusShare2 = 0;
-          if (designation2 === "operator" || designation2 === "karigar") {
-            const employee1Designation =
-              employee1?.designation.name.toLowerCase();
-            const employee1CanGetBonus =
-              employee1Designation === "operator" ||
-              employee1Designation === "karigar";
-            bonusShare2 = employee1CanGetBonus
-              ? entry.bonusAmount / 2
-              : entry.bonusAmount;
-          }
-
-          employeeMap.set(entry.employee2Id, {
-            salary: current.salary + salaryAmount2,
-            bonus: current.bonus + bonusShare2,
-            days: current.days + 1,
-          });
-        }
-      }
-    });
-
-    const summaries: EmployeeSummary[] = Array.from(employeeMap.entries()).map(
-      ([employeeId, data]) => {
-        const employee = employees.find((emp) => emp.id === employeeId)!;
-        return {
-          employee,
-          totalSalary: data.salary,
-          totalBonus: data.bonus,
-          workingDays: data.days,
-          finalAmount: data.salary + data.bonus,
-        };
-      }
-    );
-
-    setEmployeeSummaries(summaries);
-    setCalculationComplete(true);
-  };
-
-  const handleSaveCalculation = async () => {
+  const handleAddMachine = async (data: MachineFormData) => {
     setIsLoading(true);
     try {
-      // TODO: POST these results to a server route if you want to persist
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      alert(
-        `Successfully saved calculation for ${employeeSummaries.length} employees!`
-      );
-      setCalculationComplete(false);
-      setEmployeeSummaries([]);
-      setSelectedMachine(null);
-    } catch (error) {
-      console.error("Error saving calculation:", error);
-      alert("Error saving calculation. Please try again.");
+      const res = await fetch("/api/machines", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: data.name,
+          companyName: data.company,
+          machineType: data.type, 
+        }),
+      });
+      const newMachine = await res.json();
+      if (!res.ok)
+        throw new Error(newMachine.error || "Failed to create machine");
+      setMachines((prev) => [newMachine, ...prev]);
+      setIsAddingMachine(false);
+    } catch (error: any) {
+      console.error("Error adding machine:", error);
+      alert(error.message || "Failed to add machine.");
     } finally {
       setIsLoading(false);
     }
   };
 
-  const totalAmount = employeeSummaries.reduce(
-    (sum, s) => sum + s.finalAmount,
-    0
-  );
+  // ✏️ Update
+  const handleEditMachine = async (id: string, data: MachineFormData) => {
+    setIsLoading(true);
+    try {
+      const res = await fetch(`/api/machines?id=${encodeURIComponent(id)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: data.name,
+          companyName: data.company,
+          machineType: data.type,
+        }),
+      });
+      const updated = await res.json();
+      if (!res.ok) throw new Error(updated.error || "Failed to update machine");
+      setMachines((prev) => prev.map((m) => (m.id === id ? updated : m)));
+    } catch (error: any) {
+      console.error("Error editing machine:", error);
+      alert(error.message || "Failed to update machine.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-  if (loading) {
+  // 🗑️ Delete
+  const handleDeleteMachine = async (id: string) => {
+    if (!confirm("Are you sure you want to delete this machine?")) return;
+    setIsLoading(true);
+    try {
+      const res = await fetch(`/api/machines?id=${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Failed to delete machine");
+      setMachines((prev) => prev.filter((m) => m.id !== id));
+    } catch (error: any) {
+      console.error("Error deleting machine:", error);
+      alert(error.message || "Failed to delete machine.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 📈 Bonus upload → calls API (server uses your existing function)
+  const handleUploadBonus = async (
+    machineId: string,
+    data: BonusUploadData
+  ) => {
+    setIsLoading(true);
+    try {
+      let bonusRatesToUpload: {
+        bonusType: string;
+        rate: number;
+        stitchCount: number;
+      }[] = [];
+
+      if (data.bonusRates?.length) {
+        bonusRatesToUpload = data.bonusRates.map((r) => ({
+          bonusType: r.bonusType,
+          rate: r.rate,
+          stitchCount: r.stitchCount,
+        }));
+      } else {
+        if (data.stitch)
+          bonusRatesToUpload.push({
+            bonusType: "stitch",
+            rate: data.stitch,
+            stitchCount: 0,
+          });
+        if (data["2 head"])
+          bonusRatesToUpload.push({
+            bonusType: "2 head",
+            rate: data["2 head"],
+            stitchCount: 0,
+          });
+        if (data.sheet)
+          bonusRatesToUpload.push({
+            bonusType: "sheet",
+            rate: data.sheet,
+            stitchCount: 0,
+          });
+      }
+
+      const res = await fetch(
+        `/api/machines/${encodeURIComponent(machineId)}/bonus`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ bonusRates: bonusRatesToUpload }),
+        }
+      );
+      const result = await res.json();
+      if (!res.ok)
+        throw new Error(result.error || "Failed to update bonus rates");
+
+      alert("Bonus rates updated successfully!");
+    } catch (error: any) {
+      console.error("Error uploading bonus:", error);
+      alert(error.message || "Failed to update bonus rates.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 💵 Salary save → calls API (server uses your existing function)
+  const handleSaveSalary = async (
+    machineId: string,
+    data: SalaryUploadData
+  ) => {
+    setIsLoading(true);
+    try {
+      if (!data.salaryRates?.length) {
+        alert("No salary rates to save");
+        return;
+      }
+
+      const res = await fetch(
+        `/api/machines/${encodeURIComponent(machineId)}/salary`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            salaryRates: data.salaryRates.map((r) => ({
+              designation: r.designation,
+              dailyRate: r.dailyRate,
+            })),
+          }),
+        }
+      );
+      const result = await res.json();
+      if (!res.ok)
+        throw new Error(result.error || "Failed to update salary rates");
+
+      alert("Salary rates updated successfully!");
+    } catch (error: any) {
+      console.error("Error saving salary rates:", error);
+      alert(error.message || "Failed to update salary rates.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  if (error) {
     return (
       <div className="container mx-auto py-8 px-4">
-        <div className="flex items-center justify-center py-12">
-          <div className="text-center">
-            <h3 className="text-lg font-semibold mb-2">Loading...</h3>
-            <p className="text-muted-foreground">
-              Fetching machines and employees data
-            </p>
-          </div>
+        <div className="text-center py-12">
+          <p className="text-red-600">{error}</p>
+          <Button onClick={() => window.location.reload()} className="mt-4">
+            Retry
+          </Button>
         </div>
       </div>
     );
@@ -251,77 +218,41 @@ export default function BonusSalaryCalculationPage() {
 
   return (
     <div className="container mx-auto py-8 px-4">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold">Bonus & Salary Calculation</h1>
-        <p className="text-muted-foreground">
-          Calculate production-based salaries and bonuses for operators,
-          karigars, and helpers
-        </p>
-      </div>
+      <div className="flex items-center justify-between mb-8">
+        <div>
+          <h1 className="text-3xl font-bold">Machine Management</h1>
+          <p className="text-muted-foreground">
+            Manage your machines, bonus rates, and salary configurations
+          </p>
+        </div>
 
-      <Alert className="mb-6">
-        <Info className="h-4 w-4" />
-        <AlertDescription>
-          <strong>How it works:</strong> Select a machine to fetch bonus rates
-          and salary rates. Choose any 2 employees from operator, karigar, or
-          helper roles. Bonuses are distributed based on designation - operators
-          and karigars share bonuses equally, helpers receive salary only.
-          Friday work pays 2.5x normal rate.
-        </AlertDescription>
-      </Alert>
-
-      <div className="space-y-6">
-        {/* Step 1: Machine Selection */}
-        <MachineSelector
-          machines={machines}
-          selectedMachine={selectedMachine}
-          onMachineSelect={setSelectedMachine}
-          bonusRates={bonusRates}
-          salaryRates={salaryRates}
-          onRatesUpdate={(bonus, salary) => {
-            setBonusRates(bonus);
-            setSalaryRates(salary);
-          }}
-        />
-
-        {/* Step 2: Monthly Calculation */}
-        {selectedMachine && !calculationComplete && (
-          <MonthlyCalculationTable
-            machine={selectedMachine}
-            bonusRates={bonusRates}
-            salaryRates={salaryRates}
-            employees={employees}
-            onCalculationComplete={handleCalculationComplete}
-          />
-        )}
-
-        {/* Step 3: Summary and Save */}
-        {calculationComplete && (
-          <CalculationSummary
-            employeeSummaries={employeeSummaries}
-            totalAmount={totalAmount}
-            onSaveCalculation={handleSaveCalculation}
+        <PrimaryPopup
+          trigger={
+            <Button>
+              <Plus className="h-4 w-4 mr-2" />
+              Add Machine
+            </Button>
+          }
+          title="Add New Machine"
+          open={isAddingMachine}
+          onOpenChange={setIsAddingMachine}
+        >
+          <MachineForm
+            onSubmit={handleAddMachine}
+            onCancel={() => setIsAddingMachine(false)}
             isLoading={isLoading}
           />
-        )}
-
-        {/* No Machine Selected */}
-        {!selectedMachine && (
-          <Card>
-            <CardContent className="flex items-center justify-center py-12">
-              <div className="text-center">
-                <h3 className="text-lg font-semibold mb-2">
-                  Select a Machine to Begin
-                </h3>
-                <p className="text-muted-foreground">
-                  Choose a machine from the dropdown above to start calculating
-                  bonuses and salaries
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        )}
+        </PrimaryPopup>
       </div>
+
+      <MachineList
+        machines={machines}
+        onEdit={handleEditMachine}
+        onDelete={handleDeleteMachine}
+        onUploadBonus={handleUploadBonus}
+        onSaveSalary={handleSaveSalary}
+        isLoading={isLoading}
+      />
     </div>
   );
 }
