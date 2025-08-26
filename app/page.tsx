@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { StatsCard } from "../components/dashboard/stats-card";
 import {
   Card,
@@ -18,35 +19,37 @@ import {
   Clock,
   AlertCircle,
 } from "lucide-react";
-import Link from "next/link";
-import { getMachines } from "@/lib/api/machines";
-import { getEmployees } from "@/lib/api/employees";
+import type { Employee, Machine } from "@/lib/types";
 
 export default function DashboardPage() {
-  const [machines, setMachines] = useState<any[]>([]);
-  const [employees, setEmployees] = useState<any[]>([]);
+  const [machines, setMachines] = useState<Machine[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const fetchData = async () => {
+    (async () => {
       try {
         setIsLoading(true);
-        const [machinesData, employeesData] = await Promise.all([
-          getMachines(),
-          getEmployees(),
+        // Fetch from API routes (server-only Prisma), not lib/* in the client
+        const [mRes, eRes] = await Promise.all([
+          fetch("/api/machines", { cache: "no-store" }),
+          fetch("/api/employees", { cache: "no-store" }),
         ]);
-        setMachines(machinesData || []);
-        setEmployees(employeesData || []);
-      } catch (err) {
+
+        if (!mRes.ok) throw new Error("Failed to load machines");
+        if (!eRes.ok) throw new Error("Failed to load employees");
+
+        const [mData, eData] = await Promise.all([mRes.json(), eRes.json()]);
+        setMachines(mData || []);
+        setEmployees(eData || []);
+      } catch (err: any) {
         console.error("Error fetching dashboard data:", err);
-        setError("Failed to load dashboard data");
+        setError(err?.message || "Failed to load dashboard data");
       } finally {
         setIsLoading(false);
       }
-    };
-
-    fetchData();
+    })();
   }, []);
 
   if (isLoading) {
@@ -75,11 +78,12 @@ export default function DashboardPage() {
     );
   }
 
+  // Fixed salary = designation.isVariablePay === false and has a fixedMonthlySalary
   const fixedSalaryEmployees = employees.filter(
-    (emp) => emp.employee_types?.has_fixed_salary
+    (emp) => !emp.designation?.isVariablePay && emp.fixedMonthlySalary != null
   );
   const variableSalaryEmployees = employees.filter(
-    (emp) => !emp.employee_types?.has_fixed_salary
+    (emp) => emp.designation?.isVariablePay
   );
 
   const currentMonth = new Date().toLocaleDateString("en-US", {
@@ -215,10 +219,10 @@ export default function DashboardPage() {
                   <div>
                     <p className="font-medium">{machine.name}</p>
                     <p className="text-sm text-muted-foreground">
-                      {machine.company}
+                      {machine.company?.name}
                     </p>
                   </div>
-                  <Badge variant="secondary">{machine.type}</Badge>
+                  <Badge variant="secondary">{machine.machineType}</Badge>
                 </div>
               ))}
               <Link href="/machines">
@@ -244,10 +248,10 @@ export default function DashboardPage() {
                   <div>
                     <p className="font-medium">{employee.name}</p>
                     <p className="text-sm text-muted-foreground">
-                      {employee.empId}
+                      {employee.empCode}
                     </p>
                   </div>
-                  <Badge variant="outline">{employee.designation.name}</Badge>
+                  <Badge variant="outline">{employee.designation?.name}</Badge>
                 </div>
               ))}
               <Link href="/employees">
