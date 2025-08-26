@@ -2,28 +2,20 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "../../components/ui/tabs";
-import { SalaryCalculator } from "../../components/salary/salary-calculator";
-import { SalaryHistory } from "../../components/salary/salary-history";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "../../components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { SalaryCalculator } from "@/components/salary/salary-calculator";
+import { SalaryHistory } from "@/components/salary/salary-history";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Calculator, History, TrendingUp } from "lucide-react";
-import type { Employee } from "../../lib/types";
+import type { Employee } from "@/lib/types";
 
-// Fallback types if your components expect a shape
-type AnySalaryCalc = any;
+type CalcEmployee = Employee & {
+  salary: number; // derived from fixedMonthlySalary
+  designation: Employee["designation"] & { hasFixedSalary: boolean };
+};
 
 export default function SalaryCalculationPage() {
-  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [employees, setEmployees] = useState<CalcEmployee[]>([]);
   const [salaryRecords, setSalaryRecords] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
@@ -31,7 +23,6 @@ export default function SalaryCalculationPage() {
   const currentMonth = new Date().getMonth() + 1;
   const currentYear = new Date().getFullYear();
 
-  // Load employees + current month salary records from API
   useEffect(() => {
     const load = async () => {
       try {
@@ -45,12 +36,21 @@ export default function SalaryCalculationPage() {
         ]);
         if (!empRes.ok) throw new Error("Failed to fetch employees");
         if (!recRes.ok) throw new Error("Failed to fetch salary records");
-
         const [empData, recData] = await Promise.all([
           empRes.json(),
           recRes.json(),
         ]);
-        setEmployees(empData || []);
+
+        // adapt to calculator
+        const calcEmps: CalcEmployee[] = (empData || []).map((e: Employee) => ({
+          ...e,
+          salary: Number(e.fixedMonthlySalary ?? 0),
+          designation: {
+            ...e.designation,
+            hasFixedSalary: !e.designation?.isVariablePay,
+          },
+        }));
+        setEmployees(calcEmps);
         setSalaryRecords(recData || []);
       } catch (e) {
         console.error("Initial load error:", e);
@@ -63,26 +63,12 @@ export default function SalaryCalculationPage() {
     load();
   }, [currentMonth, currentYear]);
 
-  // Adapter: make employees look like the mock structure the calculator expects
-  // - expose `designation.hasFixedSalary` (derived from !isVariablePay)
-  // - expose `salary` (derived from fixedMonthlySalary)
-  const calcEmployees = useMemo(() => {
-    return (employees || []).map((e: any) => ({
-      ...e,
-      salary: e.fixedMonthlySalary ?? 0,
-      designation: {
-        ...e.designation,
-        hasFixedSalary: !e.designation?.isVariablePay,
-      },
-    }));
-  }, [employees]);
-
   const fixedSalaryEmployees = useMemo(
     () =>
-      calcEmployees.filter(
-        (emp: any) => emp.designation?.hasFixedSalary && emp.salary
+      (employees || []).filter(
+        (emp) => emp.designation?.hasFixedSalary && emp.salary
       ),
-    [calcEmployees]
+    [employees]
   );
 
   const currentMonthRecords = useMemo(
@@ -103,11 +89,9 @@ export default function SalaryCalculationPage() {
     [currentMonthRecords]
   );
 
-  // Accepts array emitted from SalaryCalculator and persists via API (bulk-friendly)
-  const handleCalculateSalaries = async (calculations: AnySalaryCalc[]) => {
+  const handleCalculateSalaries = async (calculations: any[]) => {
     setIsLoading(true);
     try {
-      // POST array to bulk create
       const res = await fetch(`/api/salary/records`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -118,10 +102,7 @@ export default function SalaryCalculationPage() {
         throw new Error(err?.error || "Failed to save salary records");
       }
       const created = await res.json();
-
-      // Merge to local state
       setSalaryRecords((prev) => [...created, ...prev]);
-
       alert(
         `Successfully calculated & saved salaries for ${calculations.length} employees!`
       );
@@ -216,13 +197,13 @@ export default function SalaryCalculationPage() {
                 Monthly Salary Calculator
               </CardTitle>
               <p className="text-sm text-muted-foreground">
-                Calculate salaries for employees with fixed monthly salaries.
-                Includes Friday multipliers, holidays, and deductions.
+                Friday/holiday pay = 2.5× daily. Advances are auto-subtracted
+                for the selected month.
               </p>
             </CardHeader>
             <CardContent>
               <SalaryCalculator
-                employees={calcEmployees}
+                employees={employees}
                 onCalculate={handleCalculateSalaries}
                 isLoading={isLoading}
               />
@@ -237,14 +218,11 @@ export default function SalaryCalculationPage() {
                 <History className="h-5 w-5" />
                 Salary History & Records
               </CardTitle>
-              <p className="text-sm text-muted-foreground">
-                View and filter historical salary calculations and records.
-              </p>
             </CardHeader>
             <CardContent>
               <SalaryHistory
                 salaryRecords={salaryRecords}
-                employees={calcEmployees}
+                employees={employees as any}
               />
             </CardContent>
           </Card>

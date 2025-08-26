@@ -1,25 +1,29 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { Button } from "../ui/button"
-import { Input } from "../ui/input"
-import { Label } from "../ui/label"
-import { Card, CardContent, CardHeader, CardTitle } from "../ui/card"
-import { Badge } from "../ui/badge"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs"
-import { Textarea } from "../ui/textarea"
-import { Plus } from "lucide-react"
-import type { Employee, EmployeeAdvance, SalaryCalculation } from "../../lib/types"
+import { useState } from "react";
+import { Button } from "../ui/button";
+import { Input } from "../ui/input";
+import { Label } from "../ui/label";
+import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
+import { Badge } from "../ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
+import { Textarea } from "../ui/textarea";
+import { Plus } from "lucide-react";
+import type {
+  Employee,
+  EmployeeAdvance,
+  SalaryCalculation,
+} from "../../lib/types";
 
 interface EmployeeProfileProps {
-  employee: Employee
+  employee: Employee;
 }
 
 export function EmployeeProfile({ employee }: EmployeeProfileProps) {
-  const [advances, setAdvances] = useState<EmployeeAdvance[]>([])
-  const [salaryRecords, setSalaryRecords] = useState<SalaryCalculation[]>([])
-  const [newAdvance, setNewAdvance] = useState({ amount: 0, description: "" })
-  const [isAddingAdvance, setIsAddingAdvance] = useState(false)
+  const [advances, setAdvances] = useState<EmployeeAdvance[]>([]);
+  const [salaryRecords, setSalaryRecords] = useState<SalaryCalculation[]>([]);
+  const [newAdvance, setNewAdvance] = useState({ amount: 0, description: "" });
+  const [isAddingAdvance, setIsAddingAdvance] = useState(false);
 
   const handleAddAdvance = () => {
     if (newAdvance.amount > 0) {
@@ -29,14 +33,17 @@ export function EmployeeProfile({ employee }: EmployeeProfileProps) {
         amount: newAdvance.amount,
         description: newAdvance.description,
         createdAt: new Date(),
-      }
-      setAdvances((prev) => [...prev, advance])
-      setNewAdvance({ amount: 0, description: "" })
-      setIsAddingAdvance(false)
+      };
+      setAdvances((prev) => [...prev, advance]);
+      setNewAdvance({ amount: 0, description: "" });
+      setIsAddingAdvance(false);
     }
-  }
+  };
 
-  const totalAdvances = advances.reduce((sum, advance) => sum + advance.amount, 0)
+  const totalAdvances = advances.reduce(
+    (sum, advance) => sum + advance.amount,
+    0
+  );
 
   return (
     <div className="space-y-6">
@@ -55,13 +62,15 @@ export function EmployeeProfile({ employee }: EmployeeProfileProps) {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
             <div>
               <p>
-                <span className="font-medium">Father Name:</span> {employee.fatherName}
+                <span className="font-medium">Father Name:</span>{" "}
+                {employee.fatherName}
               </p>
               <p>
                 <span className="font-medium">CNIC:</span> {employee.cnic}
               </p>
               <p>
-                <span className="font-medium">Phone:</span> {employee.phoneNumber}
+                <span className="font-medium">Phone:</span>{" "}
+                {employee.phoneNumber}
               </p>
               <p>
                 <span className="font-medium">City:</span> {employee.city}
@@ -72,11 +81,13 @@ export function EmployeeProfile({ employee }: EmployeeProfileProps) {
                 <span className="font-medium">Gender:</span> {employee.gender}
               </p>
               <p>
-                <span className="font-medium">Blood Group:</span> {employee.bloodGroup}
+                <span className="font-medium">Blood Group:</span>{" "}
+                {employee.bloodGroup}
               </p>
               {employee.salary && (
                 <p>
-                  <span className="font-medium">Monthly Salary:</span> Rs. {employee.salary.toLocaleString()}
+                  <span className="font-medium">Monthly Salary:</span> Rs.{" "}
+                  {employee.salary.toLocaleString()}
                 </p>
               )}
             </div>
@@ -97,26 +108,41 @@ export function EmployeeProfile({ employee }: EmployeeProfileProps) {
               <div className="flex items-center justify-between">
                 <CardTitle>Advance Management</CardTitle>
                 <div className="text-right">
-                  <p className="text-sm text-muted-foreground">Total Advances</p>
-                  <p className="text-lg font-semibold text-destructive">Rs. {totalAdvances.toLocaleString()}</p>
+                  <p className="text-sm text-muted-foreground">
+                    Total Advances
+                  </p>
+                  <p className="text-lg font-semibold text-destructive">
+                    Rs. {totalAdvances.toLocaleString()}
+                  </p>
                 </div>
               </div>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
                 {advances.length === 0 ? (
-                  <p className="text-muted-foreground text-center py-4">No advances recorded</p>
+                  <p className="text-muted-foreground text-center py-4">
+                    No advances recorded
+                  </p>
                 ) : (
                   <div className="space-y-2">
                     {advances.map((advance) => (
-                      <div key={advance.id} className="flex items-center justify-between p-3 border rounded-lg">
+                      <div
+                        key={advance.id}
+                        className="flex items-center justify-between p-3 border rounded-lg"
+                      >
                         <div>
-                          <p className="font-medium">Rs. {advance.amount.toLocaleString()}</p>
+                          <p className="font-medium">
+                            Rs. {advance.amount.toLocaleString()}
+                          </p>
                           {advance.description && (
-                            <p className="text-sm text-muted-foreground">{advance.description}</p>
+                            <p className="text-sm text-muted-foreground">
+                              {advance.description}
+                            </p>
                           )}
                         </div>
-                        <p className="text-sm text-muted-foreground">{advance.createdAt.toLocaleDateString()}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {advance.createdAt.toLocaleDateString()}
+                        </p>
                       </div>
                     ))}
                   </div>
@@ -131,17 +157,27 @@ export function EmployeeProfile({ employee }: EmployeeProfileProps) {
                         type="number"
                         value={newAdvance.amount || ""}
                         onChange={(e) =>
-                          setNewAdvance((prev) => ({ ...prev, amount: Number.parseFloat(e.target.value) || 0 }))
+                          setNewAdvance((prev) => ({
+                            ...prev,
+                            amount: Number.parseFloat(e.target.value) || 0,
+                          }))
                         }
                         placeholder="Enter advance amount"
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="advance-description">Description (Optional)</Label>
+                      <Label htmlFor="advance-description">
+                        Description (Optional)
+                      </Label>
                       <Textarea
                         id="advance-description"
                         value={newAdvance.description}
-                        onChange={(e) => setNewAdvance((prev) => ({ ...prev, description: e.target.value }))}
+                        onChange={(e) =>
+                          setNewAdvance((prev) => ({
+                            ...prev,
+                            description: e.target.value,
+                          }))
+                        }
                         placeholder="Reason for advance"
                       />
                     </div>
@@ -149,13 +185,20 @@ export function EmployeeProfile({ employee }: EmployeeProfileProps) {
                       <Button onClick={handleAddAdvance} size="sm">
                         Add Advance
                       </Button>
-                      <Button variant="outline" onClick={() => setIsAddingAdvance(false)} size="sm">
+                      <Button
+                        variant="outline"
+                        onClick={() => setIsAddingAdvance(false)}
+                        size="sm"
+                      >
                         Cancel
                       </Button>
                     </div>
                   </div>
                 ) : (
-                  <Button onClick={() => setIsAddingAdvance(true)} className="w-full">
+                  <Button
+                    onClick={() => setIsAddingAdvance(true)}
+                    className="w-full"
+                  >
                     <Plus className="h-4 w-4 mr-2" />
                     Add Advance
                   </Button>
@@ -172,24 +215,35 @@ export function EmployeeProfile({ employee }: EmployeeProfileProps) {
             </CardHeader>
             <CardContent>
               {salaryRecords.length === 0 ? (
-                <p className="text-muted-foreground text-center py-8">No salary records found</p>
+                <p className="text-muted-foreground text-center py-8">
+                  No salary records found
+                </p>
               ) : (
                 <div className="space-y-2">
                   {salaryRecords.map((record) => (
-                    <div key={record.id} className="flex items-center justify-between p-3 border rounded-lg">
+                    <div
+                      key={record.id}
+                      className="flex items-center justify-between p-3 border rounded-lg"
+                    >
                       <div>
                         <p className="font-medium">
-                          {new Date(record.year, record.month - 1).toLocaleDateString("en-US", {
+                          {new Date(
+                            record.year,
+                            record.month - 1
+                          ).toLocaleDateString("en-US", {
                             month: "long",
                             year: "numeric",
                           })}
                         </p>
                         <p className="text-sm text-muted-foreground">
-                          Working Days: {record.workingDays} | Bonus: Rs. {record.bonus.toLocaleString()}
+                          Working Days: {record.workingDays} | Bonus: Rs.{" "}
+                          {record.bonus.toLocaleString()}
                         </p>
                       </div>
                       <div className="text-right">
-                        <p className="font-semibold">Rs. {record.totalSalary.toLocaleString()}</p>
+                        <p className="font-semibold">
+                          Rs. {record.totalSalary.toLocaleString()}
+                        </p>
                         <p className="text-sm text-muted-foreground">Total</p>
                       </div>
                     </div>
@@ -205,17 +259,21 @@ export function EmployeeProfile({ employee }: EmployeeProfileProps) {
             <CardHeader>
               <CardTitle>Salary Calculator</CardTitle>
               <p className="text-sm text-muted-foreground">
-                Calculate salary for employees with fixed salaries (non-operator/karigar/helper)
+                Calculate salary for employees with fixed salaries
+                (non-operator/karigar/helper)
               </p>
             </CardHeader>
             <CardContent>
               {employee.designation.hasFixedSalary ? (
-                <SalaryCalculator employee={employee} totalAdvances={totalAdvances} />
+                <SalaryCalculator
+                  employee={employee}
+                  totalAdvances={totalAdvances}
+                />
               ) : (
                 <div className="text-center py-8">
                   <p className="text-muted-foreground">
-                    Salary calculation for {employee.designation.name} is handled in the Bonus & Salary Calculation
-                    section
+                    Salary calculation for {employee.designation.name} is
+                    handled in the Bonus & Salary Calculation section
                   </p>
                 </div>
               )}
@@ -224,31 +282,37 @@ export function EmployeeProfile({ employee }: EmployeeProfileProps) {
         </TabsContent>
       </Tabs>
     </div>
-  )
+  );
 }
 
-function SalaryCalculator({ employee, totalAdvances }: { employee: Employee; totalAdvances: number }) {
-  const [month, setMonth] = useState(new Date().getMonth() + 1)
-  const [year, setYear] = useState(new Date().getFullYear())
-  const [workingDays, setWorkingDays] = useState(0)
-  const [fridayDays, setFridayDays] = useState(0)
-  const [normalLeaves, setNormalLeaves] = useState(0)
-  const [fridayLeaves, setFridayLeaves] = useState(0)
-  const [holidays, setHolidays] = useState(0)
-  const [bonus, setBonus] = useState(0)
+function SalaryCalculator({
+  employee,
+  totalAdvances,
+}: {
+  employee: Employee;
+  totalAdvances: number;
+}) {
+  const [month, setMonth] = useState(new Date().getMonth() + 1);
+  const [year, setYear] = useState(new Date().getFullYear());
+  const [workingDays, setWorkingDays] = useState(0);
+  const [fridayDays, setFridayDays] = useState(0);
+  const [normalLeaves, setNormalLeaves] = useState(0);
+  const [fridayLeaves, setFridayLeaves] = useState(0);
+  const [holidays, setHolidays] = useState(0);
+  const [bonus, setBonus] = useState(0);
 
-  const baseSalary = employee.salary || 0
-  const daysInMonth = new Date(year, month, 0).getDate()
+  const baseSalary = employee.salary || 0;
+  const daysInMonth = new Date(year, month, 0).getDate();
 
   // Calculate daily rates
-  const dailyRate = baseSalary / daysInMonth
-  const fridayRate = dailyRate * 2.5
+  const dailyRate = baseSalary / daysInMonth;
+  const fridayRate = dailyRate * 1.5;
 
   // Calculate total salary
-  const normalWorkDays = workingDays - fridayDays
-  const salaryFromWork = normalWorkDays * dailyRate + fridayDays * fridayRate
-  const holidayPay = holidays * fridayRate
-  const totalSalary = salaryFromWork + holidayPay + bonus - totalAdvances
+  const normalWorkDays = workingDays - fridayDays;
+  const salaryFromWork = normalWorkDays * dailyRate + fridayDays * fridayRate;
+  const holidayPay = holidays * fridayRate;
+  const totalSalary = salaryFromWork + holidayPay + bonus - totalAdvances;
 
   return (
     <div className="space-y-6">
@@ -266,7 +330,12 @@ function SalaryCalculator({ employee, totalAdvances }: { employee: Employee; tot
         </div>
         <div className="space-y-2">
           <Label htmlFor="year">Year</Label>
-          <Input id="year" type="number" value={year} onChange={(e) => setYear(Number.parseInt(e.target.value))} />
+          <Input
+            id="year"
+            type="number"
+            value={year}
+            onChange={(e) => setYear(Number.parseInt(e.target.value))}
+          />
         </div>
       </div>
 
@@ -279,7 +348,9 @@ function SalaryCalculator({ employee, totalAdvances }: { employee: Employee; tot
             min="0"
             max={daysInMonth}
             value={workingDays}
-            onChange={(e) => setWorkingDays(Number.parseInt(e.target.value) || 0)}
+            onChange={(e) =>
+              setWorkingDays(Number.parseInt(e.target.value) || 0)
+            }
           />
         </div>
         <div className="space-y-2">
@@ -290,7 +361,9 @@ function SalaryCalculator({ employee, totalAdvances }: { employee: Employee; tot
             min="0"
             max={workingDays}
             value={fridayDays}
-            onChange={(e) => setFridayDays(Number.parseInt(e.target.value) || 0)}
+            onChange={(e) =>
+              setFridayDays(Number.parseInt(e.target.value) || 0)
+            }
           />
         </div>
         <div className="space-y-2">
@@ -300,7 +373,9 @@ function SalaryCalculator({ employee, totalAdvances }: { employee: Employee; tot
             type="number"
             min="0"
             value={normalLeaves}
-            onChange={(e) => setNormalLeaves(Number.parseInt(e.target.value) || 0)}
+            onChange={(e) =>
+              setNormalLeaves(Number.parseInt(e.target.value) || 0)
+            }
           />
         </div>
         <div className="space-y-2">
@@ -310,14 +385,16 @@ function SalaryCalculator({ employee, totalAdvances }: { employee: Employee; tot
             type="number"
             min="0"
             value={fridayLeaves}
-            onChange={(e) => setFridayLeaves(Number.parseInt(e.target.value) || 0)}
+            onChange={(e) =>
+              setFridayLeaves(Number.parseInt(e.target.value) || 0)
+            }
           />
         </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="space-y-2">
-          <Label htmlFor="holidays">Holidays (2.5x pay)</Label>
+          <Label htmlFor="holidays">Holidays (1.5x pay)</Label>
           <Input
             id="holidays"
             type="number"
@@ -378,5 +455,5 @@ function SalaryCalculator({ employee, totalAdvances }: { employee: Employee; tot
         </CardContent>
       </Card>
     </div>
-  )
+  );
 }

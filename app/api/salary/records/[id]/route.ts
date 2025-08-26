@@ -1,10 +1,8 @@
-// app/api/salary/records/[id]/route.ts
 import { NextResponse } from "next/server";
-import { updateSalaryRecord, deleteSalaryRecord } from "@/lib/api/salary";
+import { updateSalaryRecord, deleteSalaryRecord } from "@/lib/api/salary-records";
 
 export const dynamic = "force-dynamic";
 
-// PATCH /api/salary/records/:id
 export async function PATCH(req: Request, { params }: { params: { id: string } }) {
   try {
     const updates = await req.json();
@@ -16,7 +14,6 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   }
 }
 
-// DELETE /api/salary/records/:id
 export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
   try {
     await deleteSalaryRecord(params.id);

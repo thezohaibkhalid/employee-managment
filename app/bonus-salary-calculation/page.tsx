@@ -1,25 +1,23 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { MachineSelector } from "../../components/bonus-salary/machine-selector";
-import { MonthlyCalculationTable } from "../../components/bonus-salary/monthly-calculation-table";
-import { CalculationSummary } from "../../components/bonus-salary/calculation-summary";
-import { Card, CardContent } from "../../components/ui/card";
-import { Alert, AlertDescription } from "../../components/ui/alert";
+import { MachineSelector } from "@/components/bonus-salary/machine-selector";
+import { MonthlyCalculationTable } from "@/components/bonus-salary/monthly-calculation-table";
+import { CalculationSummary } from "@/components/bonus-salary/calculation-summary";
+import { Card, CardContent } from "@/components/ui/card";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Info } from "lucide-react";
-import { getMachines } from "../../lib/api/machines";
-import { getEmployees } from "../../lib/api/employees";
-import type { Machine, Employee, BonusRate, SalaryRate } from "../../lib/types";
+import type { Machine, Employee, BonusRate, SalaryRate } from "@/lib/types";
 
 interface DailyWorkEntry {
   date: Date;
-  day: string;
+  day: string; // e.g. "Friday"
   bonusType: "stitch" | "2 head" | "sheet";
   stitches: number;
   employee1Id: string;
   employee2Id: string;
-  bonusAmount: number;
-  salaryAmount: number;
+  bonusAmount: number; // total bonus for the day (before split)
+  salaryAmount: number; // (not used here; we re-calc)
 }
 
 interface EmployeeSummary {
@@ -28,6 +26,49 @@ interface EmployeeSummary {
   totalBonus: number;
   workingDays: number;
   finalAmount: number;
+}
+
+const FRIDAY_MULTIPLIER = 1.5; // <- 1.5× total (not 2.5×)
+
+const norm = (s?: string) => (s || "").trim().toLowerCase();
+const isFriday = (entry: DailyWorkEntry) => {
+  // robust: prefer Date, fallback to label
+  if (entry?.date) {
+    const d = new Date(entry.date);
+    return d.getDay() === 5; // 0..6, Friday=5
+  }
+  return norm(entry.day).startsWith("fri");
+};
+
+/** Pull a daily rate for a designation, regardless of shape */
+function resolveDailyRate(
+  rates: SalaryRate[],
+  designation: string,
+  selectedMachineId?: string | null
+) {
+  const d = norm(designation);
+  // try (machineId + designation) first
+  const byMachine =
+    rates.find(
+      (r: any) =>
+        (r.machineId ? r.machineId === selectedMachineId : true) &&
+        norm((r as any).designation ?? (r as any).designation?.name) === d
+    ) ||
+    rates.find(
+      (r: any) =>
+        norm((r as any).designation ?? (r as any).designation?.name) === d
+    );
+
+  if (!byMachine) return 0;
+
+  // support either .dailyRate or Prisma payload with .monthlySalary
+  const daily =
+    (byMachine as any).dailyRate ??
+    ((byMachine as any).monthlySalary
+      ? Number(byMachine as any).monthlySalary / 30
+      : 0);
+
+  return Number(daily) || 0;
 }
 
 export default function BonusSalaryCalculationPage() {
@@ -44,126 +85,121 @@ export default function BonusSalaryCalculationPage() {
   );
   const [isLoading, setIsLoading] = useState(false);
 
+  // ✅ client-safe loading (don’t import prisma code in a client component)
   useEffect(() => {
-    const loadData = async () => {
+    const load = async () => {
       try {
         setLoading(true);
-        const [machinesData, employeesData] = await Promise.all([
-          getMachines(),
-          getEmployees(),
+        const [mRes, eRes] = await Promise.all([
+          fetch("/api/machines", { cache: "no-store" }),
+          fetch("/api/employees", { cache: "no-store" }),
         ]);
+        const [machinesData, employeesData] = await Promise.all([
+          mRes.json(),
+          eRes.json(),
+        ]);
+        if (!mRes.ok)
+          throw new Error(machinesData?.error || "Failed to load machines");
+        if (!eRes.ok)
+          throw new Error(employeesData?.error || "Failed to load employees");
 
-        setMachines(machinesData);
-        setEmployees(employeesData);
-      } catch (error) {
-        console.error("Error loading data:", error);
+        setMachines(machinesData || []);
+        setEmployees(employeesData || []);
+      } catch (err) {
+        console.error("Error loading data:", err);
+        setMachines([]);
+        setEmployees([]);
       } finally {
         setLoading(false);
       }
     };
-
-    loadData();
+    load();
   }, []);
 
   const handleCalculationComplete = (workEntries: DailyWorkEntry[]) => {
-    const employeeMap = new Map<
+    // employeeId → tally
+    const tally = new Map<
       string,
       { salary: number; bonus: number; days: number }
     >();
 
-    workEntries.forEach((entry) => {
-      if (entry.stitches > 0) {
-        const employee1 = employees.find((emp) => emp.id === entry.employee1Id);
-        const employee2 = employees.find((emp) => emp.id === entry.employee2Id);
+    for (const entry of workEntries) {
+      const e1 = employees.find((x) => x.id === entry.employee1Id);
+      const e2 = employees.find((x) => x.id === entry.employee2Id);
 
-        // Process Employee 1
-        if (employee1) {
-          const current = employeeMap.get(entry.employee1Id) || {
-            salary: 0,
-            bonus: 0,
-            days: 0,
-          };
-          const designation1 = employee1.designation.name.toLowerCase();
-          const salaryRate1 =
-            salaryRates.find(
-              (r) =>
-                r.machineId === selectedMachine?.id &&
-                r.designation === designation1
-            )?.dailyRate || 0;
-          const isFriday = entry.day.toLowerCase() === "friday";
-          const salaryAmount1 = salaryRate1 * (isFriday ? 2.5 : 1);
+      const friday = isFriday(entry);
 
-          // Bonus distribution: operators and karigars get bonus, helpers don't
-          let bonusShare1 = 0;
-          if (designation1 === "operator" || designation1 === "karigar") {
-            // If both employees can get bonus, split 50/50. If only one can get bonus, they get it all
-            const employee2Designation =
-              employee2?.designation.name.toLowerCase();
-            const employee2CanGetBonus =
-              employee2Designation === "operator" ||
-              employee2Designation === "karigar";
-            bonusShare1 = employee2CanGetBonus
-              ? entry.bonusAmount / 2
-              : entry.bonusAmount;
-          }
+      // --- Salary (paid if the employee is assigned that day, regardless of stitches) ---
+      if (e1) {
+        const d1 = norm(e1.designation?.name);
+        const rate1 = resolveDailyRate(salaryRates, d1, selectedMachine?.id);
+        const dayPay1 = rate1 * (friday ? FRIDAY_MULTIPLIER : 1);
 
-          employeeMap.set(entry.employee1Id, {
-            salary: current.salary + salaryAmount1,
-            bonus: current.bonus + bonusShare1,
-            days: current.days + 1,
-          });
-        }
-
-        // Process Employee 2
-        if (employee2) {
-          const current = employeeMap.get(entry.employee2Id) || {
-            salary: 0,
-            bonus: 0,
-            days: 0,
-          };
-          const designation2 = employee2.designation.name.toLowerCase();
-          const salaryRate2 =
-            salaryRates.find(
-              (r) =>
-                r.machineId === selectedMachine?.id &&
-                r.designation === designation2
-            )?.dailyRate || 0;
-          const isFriday = entry.day.toLowerCase() === "friday";
-          const salaryAmount2 = salaryRate2 * (isFriday ? 2.5 : 1);
-
-          // Bonus distribution: operators and karigars get bonus, helpers don't
-          let bonusShare2 = 0;
-          if (designation2 === "operator" || designation2 === "karigar") {
-            // If both employees can get bonus, split 50/50. If only one can get bonus, they get it all
-            const employee1Designation =
-              employee1?.designation.name.toLowerCase();
-            const employee1CanGetBonus =
-              employee1Designation === "operator" ||
-              employee1Designation === "karigar";
-            bonusShare2 = employee1CanGetBonus
-              ? entry.bonusAmount / 2
-              : entry.bonusAmount;
-          }
-
-          employeeMap.set(entry.employee2Id, {
-            salary: current.salary + salaryAmount2,
-            bonus: current.bonus + bonusShare2,
-            days: current.days + 1,
-          });
-        }
+        const prev = tally.get(e1.id) || { salary: 0, bonus: 0, days: 0 };
+        tally.set(e1.id, {
+          salary: prev.salary + dayPay1,
+          bonus: prev.bonus, // bonus added below
+          days: prev.days + 1,
+        });
       }
-    });
 
-    // Convert to summaries
-    const summaries: EmployeeSummary[] = Array.from(employeeMap.entries()).map(
-      ([employeeId, data]) => {
+      if (e2) {
+        const d2 = norm(e2.designation?.name);
+        const rate2 = resolveDailyRate(salaryRates, d2, selectedMachine?.id);
+        const dayPay2 = rate2 * (friday ? FRIDAY_MULTIPLIER : 1);
+
+        const prev = tally.get(e2.id) || { salary: 0, bonus: 0, days: 0 };
+        tally.set(e2.id, {
+          salary: prev.salary + dayPay2,
+          bonus: prev.bonus,
+          days: prev.days + 1,
+        });
+      }
+
+      // --- Bonus (only if stitches/bonus > 0) ---
+      if (entry.stitches > 0 && entry.bonusAmount > 0) {
+        const e1Can =
+          e1 &&
+          (norm(e1.designation?.name) === "operator" ||
+            norm(e1.designation?.name) === "karigar");
+        const e2Can =
+          e2 &&
+          (norm(e2.designation?.name) === "operator" ||
+            norm(e2.designation?.name) === "karigar");
+
+        if (e1Can && e2Can) {
+          // split 50/50
+          const half = entry.bonusAmount / 2;
+          if (e1) {
+            const prev = tally.get(e1.id)!;
+            tally.set(e1.id, { ...prev, bonus: prev.bonus + half });
+          }
+          if (e2) {
+            const prev = tally.get(e2.id)!;
+            tally.set(e2.id, { ...prev, bonus: prev.bonus + half });
+          }
+        } else if (e1Can && e1) {
+          const prev = tally.get(e1.id)!;
+          tally.set(e1.id, { ...prev, bonus: prev.bonus + entry.bonusAmount });
+        } else if (e2Can && e2) {
+          const prev = tally.get(e2.id)!;
+          tally.set(e2.id, { ...prev, bonus: prev.bonus + entry.bonusAmount });
+        }
+        // helpers don’t receive bonus
+      }
+    }
+
+    // → summaries
+    const summaries: EmployeeSummary[] = [...tally.entries()].map(
+      ([employeeId, t]) => {
         const employee = employees.find((emp) => emp.id === employeeId)!;
+        const finalAmount = t.salary + t.bonus;
         return {
           employee,
-          totalSalary: data.salary,
-          totalBonus: data.bonus,
-          workingDays: data.days,
-          finalAmount: data.salary + data.bonus,
+          totalSalary: t.salary,
+          totalBonus: t.bonus,
+          workingDays: t.days,
+          finalAmount,
         };
       }
     );
@@ -175,18 +211,16 @@ export default function BonusSalaryCalculationPage() {
   const handleSaveCalculation = async () => {
     setIsLoading(true);
     try {
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-
+      // TODO: POST summaries to your API if needed
+      await new Promise((r) => setTimeout(r, 400));
       alert(
         `Successfully saved calculation for ${employeeSummaries.length} employees!`
       );
-
-      // Reset for next calculation
       setCalculationComplete(false);
       setEmployeeSummaries([]);
       setSelectedMachine(null);
-    } catch (error) {
-      console.error("Error saving calculation:", error);
+    } catch (e) {
+      console.error(e);
       alert("Error saving calculation. Please try again.");
     } finally {
       setIsLoading(false);
@@ -194,7 +228,7 @@ export default function BonusSalaryCalculationPage() {
   };
 
   const totalAmount = employeeSummaries.reduce(
-    (sum, summary) => sum + summary.finalAmount,
+    (sum, s) => sum + s.finalAmount,
     0
   );
 
@@ -223,20 +257,18 @@ export default function BonusSalaryCalculationPage() {
         </p>
       </div>
 
-      {/* Information Alert */}
+      {/* Info */}
       <Alert className="mb-6">
         <Info className="h-4 w-4" />
         <AlertDescription>
-          <strong>How it works:</strong> Select a machine to fetch bonus rates
-          and salary rates. Choose any 2 employees from operator, karigar, or
-          helper roles. Bonuses are distributed based on designation - operators
-          and karigars share bonuses equally, helpers receive salary only.
-          Friday work pays 2.5x normal rate.
+          <strong>How it works:</strong> Select a machine to fetch bonus and
+          salary rates. Choose any 2 employees (operator / karigar / helper).
+          Operators & karigars share bonuses equally (helpers don’t get bonus).
+          <strong> Friday work pays 1.5×</strong> the normal daily rate.
         </AlertDescription>
       </Alert>
 
       <div className="space-y-6">
-        {/* Step 1: Machine Selection */}
         <MachineSelector
           machines={machines}
           selectedMachine={selectedMachine}
@@ -249,7 +281,6 @@ export default function BonusSalaryCalculationPage() {
           }}
         />
 
-        {/* Step 2: Monthly Calculation */}
         {selectedMachine && !calculationComplete && (
           <MonthlyCalculationTable
             machine={selectedMachine}
@@ -260,7 +291,6 @@ export default function BonusSalaryCalculationPage() {
           />
         )}
 
-        {/* Step 3: Summary and Save */}
         {calculationComplete && (
           <CalculationSummary
             employeeSummaries={employeeSummaries}
@@ -270,7 +300,6 @@ export default function BonusSalaryCalculationPage() {
           />
         )}
 
-        {/* No Machine Selected */}
         {!selectedMachine && (
           <Card>
             <CardContent className="flex items-center justify-center py-12">

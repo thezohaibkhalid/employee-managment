@@ -1,9 +1,6 @@
-// app/api/salary/records/route.ts
+
 import { NextResponse } from "next/server";
-import {
-  getSalaryRecords,
-  createSalaryRecord,
-} from "@/lib/api/salary";
+import { getSalaryRecords, createSalaryRecord } from "@/lib/api/salary-records";
 
 export const dynamic = "force-dynamic";
 
@@ -29,7 +26,7 @@ export async function GET(req: Request) {
 }
 
 // POST /api/salary/records
-// Accepts a single record or an array of records (bulk insert)
+// Accepts a single record or an array (bulk insert)
 export async function POST(req: Request) {
   try {
     const body = await req.json();
