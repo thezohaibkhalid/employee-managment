@@ -1,119 +1,88 @@
-import { createClient } from "@/lib/supabase/client"
-import type { Database } from "@/lib/supabase/database.types"
+import { prisma } from "@/lib/prisma";
 
-type SalaryRecord = Database["public"]["Tables"]["salary_records"]["Row"]
-type SalaryRecordInsert = Database["public"]["Tables"]["salary_records"]["Insert"]
-
-export async function createSalaryRecord(salaryRecord: SalaryRecordInsert) {
-  const supabase = createClient()
-
-  const { data, error } = await supabase.from("salary_records").insert(salaryRecord).select().single()
-
-  if (error) throw error
-  return data
-}
-
-export async function getSalaryRecords(employeeId?: string, month?: number, year?: number) {
-  const supabase = createClient()
-
-  let query = supabase.from("salary_records").select(`
-      *,
-      employees(emp_id, name, employee_types(name))
-    `)
-
-  if (employeeId) {
-    query = query.eq("employee_id", employeeId)
-  }
-  if (month) {
-    query = query.eq("month", month)
-  }
-  if (year) {
-    query = query.eq("year", year)
-  }
-
-  const { data, error } = await query.order("created_at", { ascending: false })
-
-  if (error) throw error
-  return data
-}
-
-export async function updateSalaryRecord(id: string, updates: Partial<SalaryRecord>) {
-  const supabase = createClient()
-
-  const { data, error } = await supabase.from("salary_records").update(updates).eq("id", id).select().single()
-
-  if (error) throw error
-  return data
-}
-
-export async function deleteSalaryRecord(id: string) {
-  const supabase = createClient()
-
-  const { error } = await supabase.from("salary_records").delete().eq("id", id)
-
-  if (error) throw error
-}
-
+/**
+ * Calculate monthly salary for a FIXED-salary employee.
+ * Uses:
+ *  - Employee.fixedMonthlySalary (must exist)
+ *  - Employee.designation.isVariablePay (must be false)
+ *  - AppSetting.fridayMultiplier (fallback 2.5)
+ *  - EmployeeAdvance within the month for deductions
+ */
 export async function calculateMonthlySalary(
   employeeId: string,
-  month: number,
+  month: number,       // 1..12
   year: number,
   workingDays: number,
   fridayDays = 0,
   normalLeaves = 0,
   fridayLeaves = 0,
-  holidays = 0,
+  holidays = 0
 ) {
-  const supabase = createClient()
-
-  // Get employee details
-  const { data: employee, error: employeeError } = await supabase
-    .from("employees")
-    .select(`
-      *,
-      employee_types(has_fixed_salary)
-    `)
-    .eq("id", employeeId)
-    .single()
-
-  if (employeeError) throw employeeError
-  if (!employee.salary || !employee.employee_types?.has_fixed_salary) {
-    throw new Error("Employee does not have fixed salary")
+  // Load employee & ensure they’re fixed-salary (non-variable pay)
+  const employee = await prisma.employee.findUnique({
+    where: { id: employeeId },
+    include: { designation: true },
+  });
+  if (!employee) throw new Error("Employee not found");
+  if (employee.designation.isVariablePay || !employee.fixedMonthlySalary) {
+    throw new Error("Employee does not have fixed salary");
   }
 
-  // Calculate salary components
-  const dailyRate = employee.salary / 30 // Assuming 30 days per month
-  const fridayMultiplier = 2.5
+  // Friday multiplier from settings (fallback to 2.5)
+  const settings = await prisma.appSetting.findFirst();
+  const fridayMultiplier = settings?.fridayMultiplier ?? 2.5;
 
-  const normalDaysSalary = (workingDays - fridayDays) * dailyRate
-  const fridaysSalary = fridayDays * dailyRate * fridayMultiplier
-  const holidaysSalary = holidays * dailyRate * fridayMultiplier
-  const normalLeavesDeduction = normalLeaves * dailyRate
-  const fridayLeavesDeduction = fridayLeaves * dailyRate * fridayMultiplier
+  // Coerce & sanity
+  const wd = Math.max(0, Number(workingDays));
+  const fd = Math.max(0, Number(fridayDays));
+  const nl = Math.max(0, Number(normalLeaves));
+  const fl = Math.max(0, Number(fridayLeaves));
+  const hol = Math.max(0, Number(holidays));
 
-  const totalSalary = normalDaysSalary + fridaysSalary + holidaysSalary - normalLeavesDeduction - fridayLeavesDeduction
+  // Core math (30-day month convention)
+  const baseMonthly = Number(employee.fixedMonthlySalary);
+  const dailyRate = baseMonthly / 30;
 
-  // Get advance deductions for the month
-  const { data: advances } = await supabase
-    .from("employee_advances")
-    .select("amount")
-    .eq("employee_id", employeeId)
-    .gte("date", `${year}-${month.toString().padStart(2, "0")}-01`)
-    .lt("date", `${year}-${(month + 1).toString().padStart(2, "0")}-01`)
+  const normalDays = Math.max(0, wd - fd);
+  const normalDaysSalary = normalDays * dailyRate;
+  const fridaysSalary = fd * dailyRate * fridayMultiplier;
+  const holidaysSalary = hol * dailyRate * fridayMultiplier;
+  const normalLeavesDeduction = nl * dailyRate;
+  const fridayLeavesDeduction = fl * dailyRate * fridayMultiplier;
 
-  const advanceDeduction = advances?.reduce((sum, advance) => sum + advance.amount, 0) || 0
-  const finalSalary = totalSalary - advanceDeduction
+  const totalSalary =
+    normalDaysSalary +
+    fridaysSalary +
+    holidaysSalary -
+    normalLeavesDeduction -
+    fridayLeavesDeduction;
 
+  // Month boundaries for advances (inclusive start, exclusive next-month start)
+  const periodStart = new Date(year, month - 1, 1);
+  const periodEnd = new Date(year, month, 1);
+
+  const advances = await prisma.employeeAdvance.findMany({
+    where: {
+      employeeId,
+      takenOn: { gte: periodStart, lt: periodEnd },
+    },
+    select: { amount: true },
+  });
+
+  const advanceDeduction = advances.reduce((sum, a) => sum + Number(a.amount), 0);
+  const finalSalary = totalSalary - advanceDeduction;
+
+  // Return plain numbers for the API response
   return {
-    base_salary: employee.salary,
-    working_days: workingDays,
-    friday_days: fridayDays,
-    normal_leaves: normalLeaves,
-    friday_leaves: fridayLeaves,
-    holidays: holidays,
-    total_salary: totalSalary,
-    advance_deduction: advanceDeduction,
+    base_salary: Number(baseMonthly.toFixed(2)),
+    working_days: wd,
+    friday_days: fd,
+    normal_leaves: nl,
+    friday_leaves: fl,
+    holidays: hol,
+    total_salary: Number(totalSalary.toFixed(2)),
+    advance_deduction: Number(advanceDeduction.toFixed(2)),
     bonus: 0,
-    final_salary: finalSalary,
-  }
+    final_salary: Number(finalSalary.toFixed(2)),
+  };
 }
