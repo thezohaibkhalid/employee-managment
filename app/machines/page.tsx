@@ -15,6 +15,7 @@ import type {
   SalaryUploadData,
   Machine,
 } from "../../lib/types";
+import type { MachineType } from "@prisma/client";
 
 type RatesMeta = { bonusCount: number; salaryCount: number };
 
@@ -281,15 +282,16 @@ export default function MachinesPage() {
     }
   };
 
-  // Bonus upload (CSV format: num_of_stiches,2 head,sheet)
+  // 🔁 BONUS UPLOAD — by MachineType (CSV or manual)
   const handleUploadBonus = async (
-    machineId: string,
+    machineType: MachineType,
     data: BonusUploadData
   ) => {
     setIsLoading(true);
     try {
+      // Normalize to { bonusType: "2 head"|"sheet", rate, stitchCount }[]
       let bonusRatesToUpload:
-        | { bonusType: string; rate: number; stitchCount: number }[]
+        | { bonusType: "2 head" | "sheet"; rate: number; stitchCount: number }[]
         | null = null;
 
       if (
@@ -297,6 +299,7 @@ export default function MachinesPage() {
         (data as any).bonusRates.length
       ) {
         const first = (data as any).bonusRates[0];
+        // CSV-like shape detection
         if (
           "num_of_stiches" in first ||
           "num_of_stitches" in first ||
@@ -335,28 +338,45 @@ export default function MachinesPage() {
             });
           bonusRatesToUpload = normalize((data as any).bonusRates);
         } else {
-          bonusRatesToUpload = (data as any).bonusRates;
+          // Already normalized
+          bonusRatesToUpload = (data as any).bonusRates.map((r: any) => ({
+            bonusType: (r.bonusType === "2 head" ? "2 head" : "sheet") as
+              | "2 head"
+              | "sheet",
+            rate: Number(r.rate),
+            stitchCount: Number(r.stitchCount ?? 0),
+          }));
         }
       } else {
-        const rows: { bonusType: string; rate: number; stitchCount: number }[] =
-          [];
+        // Manual single-line (flat) fallback
+        const rows: {
+          bonusType: "2 head" | "sheet";
+          rate: number;
+          stitchCount: number;
+        }[] = [];
         if ((data as any)["2 head"])
           rows.push({
             bonusType: "2 head",
-            rate: (data as any)["2 head"],
+            rate: Number((data as any)["2 head"]),
             stitchCount: 0,
           });
         if ((data as any).sheet)
           rows.push({
             bonusType: "sheet",
-            rate: (data as any).sheet,
+            rate: Number((data as any).sheet),
             stitchCount: 0,
           });
         bonusRatesToUpload = rows;
       }
 
+      if (!bonusRatesToUpload?.length) {
+        alert("No bonus rates to upload.");
+        return;
+      }
+
+      // PUT to machine-type API
       const res = await fetch(
-        `/api/machines/${encodeURIComponent(machineId)}/bonus`,
+        `/api/machine-types/${encodeURIComponent(machineType)}/bonus`,
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -366,7 +386,10 @@ export default function MachinesPage() {
       const j = await res.json();
       if (!res.ok) throw new Error(j.error || "Failed to update bonus rates");
 
-      await fetchRates(machineId);
+      // Refresh all machines of this type currently opened
+      const affected = machines.filter((m) => m.machineType === machineType);
+      await Promise.all(affected.map((m) => fetchRates(m.id)));
+
       alert("Bonus rates updated successfully!");
     } catch (e: any) {
       console.error(e);
@@ -376,27 +399,32 @@ export default function MachinesPage() {
     }
   };
 
-  // Salary upload
+  // SALARY (by MachineType)
   const handleSaveSalary = async (
-    machineId: string,
-    data: SalaryUploadData
+    machineType: MachineType,
+    data?: SalaryUploadData
   ) => {
     setIsLoading(true);
     try {
-      if (!data.salaryRates?.length) {
+      const anyData = (data ?? {}) as any;
+      const rows = (anyData.salaryRates ?? anyData.rows ?? []) as {
+        designation: string;
+        dailyRate: number;
+      }[];
+      if (!Array.isArray(rows) || rows.length === 0) {
         alert("No salary rates to save");
         return;
       }
 
       const res = await fetch(
-        `/api/machines/${encodeURIComponent(machineId)}/salary`,
+        `/api/machine-types/${encodeURIComponent(machineType)}/salary`,
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            salaryRates: data.salaryRates.map((r) => ({
+            rows: rows.map((r) => ({
               designation: r.designation,
-              dailyRate: r.dailyRate,
+              dailyRate: Number(r.dailyRate),
             })),
           }),
         }
@@ -404,7 +432,9 @@ export default function MachinesPage() {
       const j = await res.json();
       if (!res.ok) throw new Error(j.error || "Failed to update salary rates");
 
-      await fetchRates(machineId);
+      const affected = machines.filter((m) => m.machineType === machineType);
+      await Promise.all(affected.map((m) => fetchRates(m.id)));
+
       alert("Salary rates updated successfully!");
     } catch (e: any) {
       console.error(e);
@@ -476,7 +506,7 @@ export default function MachinesPage() {
           {quickCards.map((m) => {
             const isOpen = !!open[m.id];
             const bundle = ratesByMachine[m.id];
-            const Icon = isOpen ? ChevronDown : ChevronRight; // ✅ FIX: use a component variable
+            const Icon = isOpen ? ChevronDown : ChevronRight;
             return (
               <Card key={m.id} className="border">
                 <CardContent className="p-4">
@@ -487,7 +517,7 @@ export default function MachinesPage() {
                         onClick={() => toggleOpen(m.id)}
                         title={isOpen ? "Collapse" : "Expand"}
                       >
-                        <Icon className="h-4 w-4" /> {/* ✅ FIXED */}
+                        <Icon className="h-4 w-4" />
                       </button>
                       <div>
                         <div className="font-semibold">{m.name}</div>
@@ -585,7 +615,7 @@ export default function MachinesPage() {
                       {/* Bonus table */}
                       <div>
                         <div className="text-sm font-medium mb-2">
-                          Bonus Tiers (per 1,000 stitches)
+                          Bonus Tiers (flat amounts)
                         </div>
                         {!bundle?.loaded && (
                           <div className="text-xs text-muted-foreground">
@@ -643,7 +673,6 @@ export default function MachinesPage() {
         </div>
       )}
 
-      {/* Existing editable list */}
       <MachineList
         machines={machines}
         onEdit={handleEditMachine}

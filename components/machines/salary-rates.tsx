@@ -1,7 +1,6 @@
 "use client";
 
 import type React from "react";
-
 import { useState } from "react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -10,121 +9,161 @@ import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Upload, FileText } from "lucide-react";
 import { WORKER_DESIGNATIONS, MACHINE_TYPE_LABELS } from "../../lib/constants";
-import type { SalaryUploadData, MachineType } from "../../lib/types";
+import type { MachineType } from "@prisma/client";
+
+type Row = { designation: string; dailyRate: number };
 
 interface SalaryRatesProps {
-  machineId: string;
   machineType: MachineType;
-  onSave: (data: SalaryUploadData) => void;
-  initialData?: SalaryUploadData;
+  onSave: (machineType: MachineType, data: { rows: Row[] }) => void;
+  initialData?:
+    | { rows?: Row[] }
+    | { salaryRates?: Row[] }
+    | Record<string, number>;
   isLoading?: boolean;
 }
 
 export function SalaryRates({
-  machineId,
   machineType,
   onSave,
   initialData,
   isLoading,
 }: SalaryRatesProps) {
+  // local state supports both manual keyed shape and rows
+  const initFromInitial = Array.isArray((initialData as any)?.rows)
+    ? ((initialData as any).rows as Row[])
+    : Array.isArray((initialData as any)?.salaryRates)
+    ? ((initialData as any).salaryRates as Row[])
+    : WORKER_DESIGNATIONS.map((d) => ({
+        designation: d,
+        dailyRate: Number((initialData as any)?.[d] ?? 0),
+      }));
+
   const [file, setFile] = useState<File | null>(null);
   const [uploadMethod, setUploadMethod] = useState<"csv" | "manual">("manual");
-  const [salaryData, setSalaryData] = useState<SalaryUploadData>(
-    initialData || {
-      operator: 0,
-      karigar: 0,
-      helper: 0,
-    }
+  const [rows, setRows] = useState<Row[]>(
+    initFromInitial.map((r) => ({
+      designation: String(r.designation),
+      dailyRate: Number(r.dailyRate) || 0,
+    }))
   );
+
+  const normalizeHeader = (s: string) =>
+    s.toLowerCase().replace(/[_\-]/g, " ").replace(/\s+/g, " ").trim();
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
-    if (selectedFile && selectedFile.type === "text/csv") {
+    if (selectedFile && selectedFile.name.toLowerCase().endsWith(".csv")) {
       setFile(selectedFile);
     } else {
-      alert("Please select a valid CSV file");
+      alert("Please select a valid .csv file");
     }
   };
 
   const handleCSVUpload = async () => {
     if (!file) return;
-
     try {
       const text = await file.text();
-      const lines = text.split("\n").filter((line) => line.trim());
+      const lines = text
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter((l) => l && !l.startsWith("#"));
 
       if (lines.length < 2) {
-        alert("CSV file must contain at least a header row and one data row");
+        alert("CSV must contain a header and at least one data row");
         return;
       }
 
-      const headers = lines[0].split(",").map((h) => h.trim().toLowerCase());
-      console.log(" CSV Headers:", headers);
+      const header = lines[0].split(",").map((h) => normalizeHeader(h));
+      // accept "designation" and "daily_rate" (with variations)
+      const idxDesignation = header.findIndex((h) =>
+        ["designation", "role", "worker", "title"].includes(h)
+      );
+      const idxDaily = header.findIndex((h) =>
+        ["daily rate", "dailyrate", "daily", "rate"].includes(h)
+      );
 
-      const salaryRates: Array<{
-        designation: "operator" | "karigar" | "helper";
-        dailyRate: number;
-      }> = [];
+      if (idxDesignation === -1 || idxDaily === -1) {
+        alert(
+          `CSV header must include "designation" and "daily_rate". Got: ${header.join(
+            ", "
+          )}`
+        );
+        return;
+      }
 
-      // Skip header row and process data rows
+      const parsed: Row[] = [];
       for (let i = 1; i < lines.length; i++) {
-        const values = lines[i].split(",").map((v) => v.trim());
+        const cols = lines[i].split(",").map((c) => c.trim());
+        if (!cols.length) continue;
 
-        if (values.length >= 2) {
-          const designation = values[0].toLowerCase();
-          const dailyRate = Number.parseFloat(values[1]) || 0;
+        const designation = (cols[idxDesignation] ?? "").toLowerCase();
+        const dailyRate = Number.parseFloat(cols[idxDaily] ?? "0");
 
-          if (
-            WORKER_DESIGNATIONS.includes(designation as any) &&
-            dailyRate > 0
-          ) {
-            salaryRates.push({
-              designation: designation as "operator" | "karigar" | "helper",
-              dailyRate,
-            });
-          }
-        }
+        if (!designation) continue;
+        if (!Number.isFinite(dailyRate) || dailyRate <= 0) continue;
+
+        // Only allow known designations by default
+        if (!WORKER_DESIGNATIONS.includes(designation as any)) continue;
+
+        parsed.push({ designation, dailyRate });
       }
 
-      console.log(" Parsed salary rates:", salaryRates);
-
-      if (salaryRates.length === 0) {
-        alert("No valid salary rates found in CSV file");
+      if (!parsed.length) {
+        alert("No valid salary rows found in CSV.");
         return;
       }
 
-      const data: SalaryUploadData = { salaryRates };
-      onSave(data);
-    } catch (error) {
-      console.error(" Error parsing CSV:", error);
-      alert("Error parsing CSV file. Please check the format.");
+      // update local state & call parent
+      setRows(parsed);
+      onSave(machineType, { rows: parsed }); // ✅ IMPORTANT
+    } catch (e) {
+      console.error("CSV parse error:", e);
+      alert("Error parsing CSV. Please check the format.");
     }
   };
 
-  const handleManualSubmit = () => {
-    const salaryRates = WORKER_DESIGNATIONS.map((designation) => ({
-      designation,
-      dailyRate: salaryData[designation] || 0,
-    })).filter((rate) => rate.dailyRate > 0);
+  // Manual editing helpers
+  const setValue = (designation: string, value: number) => {
+    setRows((prev) => {
+      const next = [...prev];
+      const idx = next.findIndex((r) => r.designation === designation);
+      if (idx >= 0) {
+        next[idx] = { ...next[idx], dailyRate: value };
+      } else {
+        next.push({ designation, dailyRate: value });
+      }
+      return next;
+    });
+  };
 
-    if (salaryRates.length === 0) {
+  const handleManualSubmit = () => {
+    const cleaned = rows
+      .map((r) => ({
+        designation: String(r.designation).trim(),
+        dailyRate: Number(r.dailyRate),
+      }))
+      .filter(
+        (r) =>
+          r.designation.length > 0 &&
+          Number.isFinite(r.dailyRate) &&
+          r.dailyRate > 0 &&
+          WORKER_DESIGNATIONS.includes(r.designation as any)
+      );
+
+    if (!cleaned.length) {
       alert("Please enter at least one salary rate");
       return;
     }
 
-    const data: SalaryUploadData = { salaryRates };
-    onSave(data);
-  };
-
-  const handleChange = (designation: keyof SalaryUploadData, value: number) => {
-    setSalaryData((prev) => ({ ...prev, [designation]: value }));
+    onSave(machineType, { rows: cleaned }); // ✅ IMPORTANT
   };
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>
-          Daily Salary Rates - {MACHINE_TYPE_LABELS[machineType]}
+          Daily Salary Rates — {MACHINE_TYPE_LABELS[machineType]}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -150,12 +189,21 @@ export function SalaryRates({
             <Alert>
               <FileText className="h-4 w-4" />
               <AlertDescription>
-                Upload a CSV file with columns:{" "}
-                <strong>designation, daily_rate</strong>. Valid designations
-                are: operator, karigar, helper.
+                CSV columns (case-insensitive):{" "}
+                <strong>designation, daily_rate</strong>
                 <br />
-                <span className="text-xs mt-1 block">
-                  Example: operator,1500 (operator gets Rs.1500 per day)
+                Valid designations: <code>operator</code>, <code>karigar</code>,{" "}
+                <code>helper</code>.
+                <span className="block text-xs mt-1">
+                  Example:
+                  <br />
+                  designation,daily_rate
+                  <br />
+                  operator,2200
+                  <br />
+                  karigar,1800
+                  <br />
+                  helper,1500
                 </span>
               </AlertDescription>
             </Alert>
@@ -188,32 +236,37 @@ export function SalaryRates({
           <div className="space-y-4">
             <Alert>
               <AlertDescription>
-                Enter daily salary rates for {MACHINE_TYPE_LABELS[machineType]}{" "}
-                workers. These rates will be used for payroll calculations.
+                Enter daily salary rates for {MACHINE_TYPE_LABELS[machineType]}.
+                These will be converted to monthly at save time.
               </AlertDescription>
             </Alert>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {WORKER_DESIGNATIONS.map((designation) => (
-                <div key={designation} className="space-y-2">
-                  <Label htmlFor={designation} className="capitalize">
-                    {designation} Daily Rate (Rs.)
-                  </Label>
-                  <Input
-                    id={designation}
-                    type="number"
-                    step="0.01"
-                    placeholder="0.00"
-                    value={salaryData[designation] || ""}
-                    onChange={(e) =>
-                      handleChange(
-                        designation,
-                        Number.parseFloat(e.target.value) || 0
-                      )
-                    }
-                  />
-                </div>
-              ))}
+              {WORKER_DESIGNATIONS.map((designation) => {
+                const current =
+                  rows.find((r) => r.designation === designation)?.dailyRate ??
+                  0;
+                return (
+                  <div key={designation} className="space-y-2">
+                    <Label htmlFor={designation} className="capitalize">
+                      {designation} Daily Rate (Rs.)
+                    </Label>
+                    <Input
+                      id={designation}
+                      type="number"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={current || ""}
+                      onChange={(e) =>
+                        setValue(
+                          designation,
+                          Number.parseFloat(e.target.value) || 0
+                        )
+                      }
+                    />
+                  </div>
+                );
+              })}
             </div>
 
             <Button

@@ -254,39 +254,39 @@ async function main() {
   const period = await prisma.payrollPeriod.create({
     data: { year, month },
   });
+// ===== Payroll Run (for H17-01) =====
+const salaryOperatorH17 = await prisma.machineTypeSalary.findFirst({
+  where: { machineType: m1.machineType, designationId: operator.id },
+});
+const salaryHelperH17 = await prisma.machineTypeSalary.findFirst({
+  where: { machineType: m1.machineType, designationId: helper.id },
+});
+const tiersH17 = await prisma.machineTypeBonusTier.findMany({
+  where: { machineType: m1.machineType },
+  orderBy: { minStitches: "asc" },
+});
 
-  // ===== Payroll Run (for H17-01) =====
-  // Snapshot helpful for audit: selected salaries + tiers + fridayMultiplier
-  const salaryOperatorH17 = await prisma.machineTypeSalary.findFirst({
-    where: { machineType: "H17", designationId: operator.id },
-  });
-  const salaryHelperH17 = await prisma.machineTypeSalary.findFirst({
-    where: { machineType: "H17", designationId: helper.id },
-  });
-  const tiersH17 = await prisma.machineTypeBonusTier.findMany({
-    where: { machineType: "H17" },
-    orderBy: { minStitches: "asc" },
-  });
-
-  const run = await prisma.payrollRun.create({
-    data: {
-      machineId: m1.id,
-      periodId: period.id,
-      rateSnapshot: {
-        fridayMultiplier: appSetting.fridayMultiplier,
-        salaries: {
-          operatorMonthly: salaryOperatorH17?.monthlySalary,
-          helperMonthly: salaryHelperH17?.monthlySalary,
-        },
-        bonusTiers: tiersH17.map((t) => ({
-          min: t.minStitches,
-          max: t.maxStitches,
-          rateTwoHead: t.rateTwoHead,
-          rateSheet: t.rateSheet,
-        })),
+// ✅ Create the run here
+const run = await prisma.payrollRun.create({
+  data: {
+    machineId: m1.id,
+    periodId: period.id,
+    rateSnapshot: {
+      fridayMultiplier: appSetting.fridayMultiplier,
+      salaries: {
+        operatorMonthly: salaryOperatorH17?.monthlySalary,
+        helperMonthly: salaryHelperH17?.monthlySalary,
       },
+      bonusTiers: tiersH17.map((t) => ({
+        min: t.minStitches,
+        max: t.maxStitches,
+        rateTwoHead: t.rateTwoHead,
+        rateSheet: t.rateSheet,
+      })),
     },
-  });
+  },
+});
+
 
   // ===== WorkDays for 1–7 Aug 2025 =====
   // A = Ali (Operator), B = Bilal (Helper)
@@ -521,7 +521,6 @@ async function main() {
   const psAli = await buildPayslipFor(ali, totals.ali);
   const psBilal = await buildPayslipFor(bilal, totals.bilal);
 
-
   const saraDeduct = "5000.00";
   const saraGross = "80000.00";
   const saraNet = sub(saraGross, saraDeduct);
@@ -595,8 +594,6 @@ main()
   .finally(async () => {
     await prisma.$disconnect();
   });
-
-
 
 //   # 1) Ensure DB is running (you used :5433)
 // # 2) Run the seed
